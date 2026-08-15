@@ -1,0 +1,8 @@
+-- 1. Crear el rol de usuario con la clave de tu .env y permisos necesarios
+CREATE USER usuario WITH PASSWORD 'usuario' SUPERUSER CREATEDB;
+
+-- 2. Crear la base de datos 'ecosistema' asignándole como dueño a 'usuario'
+CREATE DATABASE ecosistema OWNER usuario;
+
+-- 3. Salir de psql
+\q
