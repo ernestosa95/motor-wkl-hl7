@@ -5,8 +5,10 @@ VT = b'\x0b'
 FS = b'\x1c'
 CR = b'\x0d'
 
-def iniciar_servidor_mllp(host='127.0.0.1', port=5000):
+def iniciar_servidor_mllp(host='127.0.0.1', port=2575):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((host, port))
         s.listen()
         print(f"Mock HIS/RIS escuchando tráfico MLLP en {host}:{port}...")

@@ -1,0 +1,4 @@
+MSH|^~\&|MOTOR_DICOM|TECNOIMAGEN|RIS|DESTINO|{{ timestamp }}||ORM^O01|{{ msg_id }}|P|2.5
+PID|1||{{ payload['00100020'] }}||{{ payload['00100010'].replace('^', ' ') }}||{{ payload.get('00100030', '') }}|{{ payload.get('00100040', '') }}
+ORC|NW|{{ payload['00080050'] }}|||||||||||||||
+OBR|1|{{ payload['00080050'] }}|{{ payload['00080050'] }}|{{ payload.get('00321060', 'ESTUDIO NO ESPECIFICADO') }}||||||||||||{{ payload.get('00080090', '') }}|||||||||{{ payload.get('00080060', '') }}|||{{ payload.get('00400002', '') }}

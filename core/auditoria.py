@@ -1,63 +1,50 @@
-import json
-from models import SessionLocal, TransaccionIntegracion
+import uuid
+from core.database import SessionLocal
+from core.models import RegistroTrazabilidad, EstadoMensaje
 
-def auditar_ultima_transaccion():
+def actualizar_estado(correlation_id: uuid.UUID, estado: EstadoMensaje):
     """
-    Consulta la base de datos PostgreSQL para auditar la última transacción procesada.
-    Valida la trazabilidad total del dato mediante el Correlation ID y los payloads en JSONB.
+    Actualiza el estado de trazabilidad clínico de forma atómica en PostgreSQL.
+    Garantiza que ninguna orden quede huérfana en caso de fallo del broker.
     """
-    session = SessionLocal()
+    db = SessionLocal()
     try:
-        # Obtenemos el registro más reciente basado en la fecha de ingesta
-        tx = session.query(TransaccionIntegracion).order_by(TransaccionIntegracion.fecha_ingesta.desc()).first()
+        registro = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).first()
         
-        if not tx:
-            print("[!] No se encontraron registros de transacciones en la base de datos.")
-            return
-
-        print("\n" + "="*70)
-        # El Correlation ID acompaña al dato en todo su ciclo de vida
-        print(f"[*] AUDITORÍA DE TRANSACCIÓN | Correlation ID: {tx.correlation_id}")
-        print(f"[*] Estado Final: {tx.estado.value}")
-        print(f"[*] Fecha de Ingesta: {tx.fecha_ingesta}")
-        print("="*70)
-        
-        print("\n[1] TRAZABILIDAD HISTÓRICA (Auditoría JSONB):")
-        # Mostramos los saltos de estado (INGRESADO -> TRANSFORMADO -> COMPLETADO/ERROR)[cite: 1]
-        if tx.auditoria_historica:
-            for evento in tx.auditoria_historica:
-                fecha = evento.get('fecha', 'Fecha no registrada')
-                estado = evento.get('estado_asignado', 'N/A')
-                desc = evento.get('evento', '')
-                print(f"    -> [{estado}] {fecha} | {desc}")
-        else:
-            print("    Sin eventos registrados.")
-
-        print("\n[2] PAYLOAD GENERADO (Transformación a HL7 v2.5):")
-        # Extracción de strings HL7 (ADT y ORM) desde la columna JSONB[cite: 1]
-        hl7_generado = tx.payloads.get("hl7_generado")
-        if hl7_generado:
-            for linea in hl7_generado.split('\n'):
-                print(f"    {linea}")
-        else:
-            print("    [!] Mensaje HL7 no generado o no disponible.")
-
-        print("\n[3] RESPUESTA DEL SISTEMA DESTINO (Recepción de ACK):")
-        # Registro de respuesta síncrona del sistema destino[cite: 1]
-        ack_recibido = tx.payloads.get("ack_recibido")
-        if ack_recibido:
-            for linea in ack_recibido.split('\r'):
-                if linea.strip():
-                    print(f"    {linea}")
-        else:
-            print("    [!] Sin respuesta (ACK) registrada.")
-            
-        print("="*70 + "\n")
-
+        if registro:
+            registro.estado = estado
+            db.commit()
+            print(f"[*] Auditoría: Estado de {correlation_id} actualizado a {estado.name}")
     except Exception as e:
-        print(f"[X] Error de seguridad al consultar PostgreSQL: {e}")
+        db.rollback()
+        print(f"[!] Error crítico de persistencia al actualizar estado: {e}")
     finally:
-        session.close()
+        db.close()
 
-if __name__ == "__main__":
-    auditar_ultima_transaccion()
+def registrar_ingreso(correlation_id: uuid.UUID, patient_id: str, accession_number: str, modalidad: str, payload_dicom: dict):
+    """
+    Registra la orden capturada desde la Worklist en la base de datos.
+    Asegura que el registro crudo inicie su ciclo con el estado clínico inicial.
+    """
+    db = SessionLocal()
+    try:
+        nuevo_registro = RegistroTrazabilidad(
+            correlation_id=correlation_id,
+            patient_id=patient_id,
+            accession_number=accession_number,
+            modalidad=modalidad,
+            payload_dicom=payload_dicom,
+            estado=EstadoMensaje.INGRESADO
+        )
+        db.add(nuevo_registro)
+        db.commit()
+        print(f"[*] Auditoría: Orden {accession_number} registrada en DB con estado INGRESADO")
+        return nuevo_registro
+    except Exception as e:
+        db.rollback()
+        print(f"[!] Error crítico al registrar ingreso en PostgreSQL: {e}")
+        raise e
+    finally:
+        db.close()
