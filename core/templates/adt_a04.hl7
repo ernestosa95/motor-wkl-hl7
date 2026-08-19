@@ -1,0 +1,4 @@
+MSH|^~\&|MOTOR_DICOM|TECNOIMAGEN|HIS|DESTINO|{{ timestamp }}||ADT^A04|{{ msg_id }}|P|2.5
+EVN|A04|{{ timestamp }}
+PID|1||{{ pid_3 }}||{{ pid_5 }}||{{ pid_7 }}|{{ pid_8 }}
+PV1|1|N|||||{{ medico_derivante }}|||{{ modalidad }}

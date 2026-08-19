@@ -1,46 +1,51 @@
-from fastapi import FastAPI, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from typing import Optional, Dict, List
+
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-# Importaciones de nuestra arquitectura core
-from core.database import SessionLocal
-from core.models import RegistroTrazabilidad, EstadoMensaje
+from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
+from core.auth import autenticar, crear_token, get_current_user, get_db
+from core import config_repo, mapeo_repo
+from core.conectividad import test_dicom_echo, test_mllp
 
-# Inicialización de la aplicación FastAPI[cite: 1]
-app = FastAPI(
-    title="Motor HL7 API", 
-    description="API REST para el Motor de Integración DICOM-HL7",
-    version="1.0"
-)
+app = FastAPI(title="Motor HL7 API", version="1.3")
 
-# Configuración estricta de CORS para permitir peticiones desde la consola React
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Dependencia segura para inyectar y cerrar la sesión de base de datos
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+
+@app.on_event("startup")
+def _startup():
+    config_repo.seed_canales()
+    mapeo_repo.seed_mapeos()
+
+
+# ---------- Autenticación ----------
+
+@app.post("/api/v1/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = autenticar(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Usuario o contraseña incorrectos")
+    return {"access_token": crear_token(user.username), "token_type": "bearer"}
+
+
+# ---------- Trazabilidad ----------
 
 @app.get("/api/v1/trazabilidad")
-def obtener_registros(db: Session = Depends(get_db)):
-    """
-    Retorna los últimos 50 registros de órdenes clínicas para el Monitor.
-    Garantiza la trazabilidad total leyendo directamente desde PostgreSQL.
-    """
+def obtener_registros(db: Session = Depends(get_db), _user: Usuario = Depends(get_current_user)):
     registros = db.query(RegistroTrazabilidad).order_by(
         RegistroTrazabilidad.created_at.desc()
     ).limit(50).all()
-    
     return [
         {
             "id": str(r.correlation_id),
@@ -48,36 +53,90 @@ def obtener_registros(db: Session = Depends(get_db)):
             "accession": r.accession_number,
             "modalidad": r.modalidad,
             "estado": r.estado.name,
-            "fecha": r.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        } for r in registros
+            "fecha": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "tiene_hl7": bool(r.payload_hl7),
+        }
+        for r in registros
     ]
 
-@app.get("/api/v1/health/channels")
-def estado_canales(db: Session = Depends(get_db)):
-    """
-    Endpoint de alertas operativas.
-    Entrega el estado de los canales, volumen de mensajes procesados y en error[cite: 1].
-    """
-    # Cálculo de métricas operativas
-    total_completados = db.query(RegistroTrazabilidad).filter(
-        RegistroTrazabilidad.estado == EstadoMensaje.COMPLETADO
-    ).count()
-    
-    total_errores = db.query(RegistroTrazabilidad).filter(
-        RegistroTrazabilidad.estado.in_([
-            EstadoMensaje.ERROR_EMISION, 
-            EstadoMensaje.ERROR_PERMANENTE
-        ])
-    ).count()
 
+@app.get("/api/v1/trazabilidad/{correlation_id}/hl7")
+def obtener_hl7(correlation_id: str, db: Session = Depends(get_db),
+                _user: Usuario = Depends(get_current_user)):
+    r = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id
+    ).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
     return {
-        "status": "UP",
-        "channels": {
-            "dicom_ingesta": {"status": "LISTENING", "protocol": "C-FIND SCP"},
-            "hl7_emision": {"status": "ACTIVE", "protocol": "MLLP TCP/IP"}
-        },
-        "metrics": {
-            "volumen_procesado": total_completados,
-            "volumen_errores": total_errores
-        }
+        "accession": r.accession_number,
+        "estado": r.estado.name,
+        "hl7": r.payload_hl7 or {},
     }
+
+
+@app.get("/api/v1/health/channels")
+def estado_canales(db: Session = Depends(get_db), _user: Usuario = Depends(get_current_user)):
+    completados = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.estado == EstadoMensaje.COMPLETADO).count()
+    errores = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.estado.in_([EstadoMensaje.ERROR_EMISION, EstadoMensaje.ERROR_PERMANENTE])).count()
+    return {"status": "UP", "metrics": {"volumen_procesado": completados, "volumen_errores": errores}}
+
+
+# ---------- Canales ----------
+
+class CanalIn(BaseModel):
+    host: Optional[str] = None
+    puerto: Optional[int] = None
+    aet: Optional[str] = None
+    aet_local: Optional[str] = None
+    activo: Optional[bool] = None
+
+
+@app.get("/api/v1/canales")
+def listar_canales(_user: Usuario = Depends(get_current_user)):
+    return config_repo.listar()
+
+
+@app.put("/api/v1/canales/{clave}")
+def actualizar_canal(clave: str, body: CanalIn, _user: Usuario = Depends(get_current_user)):
+    actualizado = config_repo.upsert(clave, body.dict(exclude_unset=True))
+    if actualizado is None:
+        raise HTTPException(status_code=404, detail=f"Canal '{clave}' no encontrado")
+    return actualizado
+
+
+@app.post("/api/v1/canales/{clave}/test")
+def probar_canal(clave: str, _user: Usuario = Depends(get_current_user)):
+    canal = config_repo.obtener_canal(clave)
+    if canal is None:
+        raise HTTPException(status_code=404, detail=f"Canal '{clave}' no encontrado")
+    if clave == "worklist_scu":
+        ok, mensaje = test_dicom_echo(canal["host"], canal["puerto"], canal["aet"], canal["aet_local"])
+    else:
+        ok, mensaje = test_mllp(canal["host"], canal["puerto"])
+    return {"ok": ok, "mensaje": mensaje}
+
+
+# ---------- Mapeos por tipo ----------
+
+class MapeosIn(BaseModel):
+    mapeos: Dict[str, List[str]]
+    valores_fijos: Dict[str, str] = {}
+
+
+@app.get("/api/v1/mapeos/{tipo}")
+def obtener_mapeos(tipo: str, _user: Usuario = Depends(get_current_user)):
+    tipo = tipo.upper()
+    if tipo not in ("ADT", "ORM"):
+        raise HTTPException(status_code=404, detail="Tipo de mensaje inválido")
+    return mapeo_repo.obtener_todo(tipo)
+
+
+@app.put("/api/v1/mapeos/{tipo}")
+def guardar_mapeos(tipo: str, body: MapeosIn, _user: Usuario = Depends(get_current_user)):
+    tipo = tipo.upper()
+    if tipo not in ("ADT", "ORM"):
+        raise HTTPException(status_code=404, detail="Tipo de mensaje inválido")
+    return mapeo_repo.reemplazar(tipo, body.mapeos, body.valores_fijos)

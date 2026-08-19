@@ -1,0 +1,23 @@
+# --- API / Web ---
+fastapi
+uvicorn[standard]
+python-multipart          # requerido por el login (OAuth2PasswordRequestForm)
+
+# --- Base de datos ---
+sqlalchemy
+psycopg2-binary
+alembic
+
+# --- Cola / Broker ---
+huey
+
+# --- Transformación ---
+jinja2
+
+# --- DICOM ---
+pynetdicom
+pydicom
+
+# --- Autenticación ---
+PyJWT
+passlib[bcrypt]

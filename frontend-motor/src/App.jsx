@@ -1,99 +1,113 @@
 import React, { useState } from 'react';
-import { Activity, Settings, Network } from 'lucide-react';
+import { Activity, Network, GitCompareArrows, LogOut } from 'lucide-react';
 import Monitor from './components/Monitor';
 import Canales from './components/Canales';
+import Mapeos from './components/Mapeos';
+import Login from './components/Login';
+
+const SECCIONES = [
+  { id: 'monitor', label: 'Monitor', icon: Activity,
+    titulo: 'Trazabilidad', subtitulo: 'Ciclo de vida de los mensajes DICOM → HL7.' },
+  { id: 'canales', label: 'Canales', icon: Network,
+    titulo: 'Canales y conexiones', subtitulo: 'Endpoints DICOM y MLLP, con prueba de conectividad.' },
+  { id: 'mapeo', label: 'Mapeo', icon: GitCompareArrows,
+    titulo: 'Mapeo DICOM → HL7', subtitulo: 'Definí a qué campos HL7 se envía cada tag DICOM.' },
+];
 
 export default function App() {
-  // Estado inicial fijado en la primera sección por defecto
-  const [seccionActiva, setSeccionActiva] = useState('monitor');
+  const [seccion, setSeccion] = useState('monitor');
+  const [logueado, setLogueado] = useState(!!localStorage.getItem('token'));
+
+  const cerrarSesion = () => {
+    localStorage.removeItem('token');
+    setLogueado(false);
+  };
+
+  if (!logueado) return <Login onLogin={() => setLogueado(true)} />;
+
+  const actual = SECCIONES.find((s) => s.id === seccion);
 
   return (
-    // Diseño estructurado sobre un fondo blanco plano, sin imágenes de fondo que generen ruido visual
-    <div className="flex h-screen w-full bg-white text-gray-800 font-sans">
-      
-      {/* Barra Lateral de Navegación */}
-      <nav className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col p-4">
-        <div className="mb-8 px-2">
-          <h1 className="text-2xl font-bold text-blue-900 tracking-tight">Motor HL7</h1>
-          <p className="text-xs text-gray-500 mt-1">Consola de Integración</p>
+    <div className="flex h-screen bg-zinc-50 text-zinc-900 font-sans">
+
+      {/* Sidebar */}
+      <aside className="w-60 shrink-0 bg-white border-r border-zinc-200 flex flex-col">
+        <div className="px-6 py-6 border-b border-zinc-100">
+          <div className="flex items-center gap-2.5">
+            <span className="h-2 w-2 rounded-full bg-teal-500" />
+            <h1 className="text-[15px] font-semibold tracking-tight text-zinc-900">Motor HL7</h1>
+          </div>
+          <p className="mt-1 text-[11px] text-zinc-400 tracking-wide">
+            Tecnoimagen · Integración clínica
+          </p>
         </div>
-        
-        <div className="flex flex-col gap-2">
-          <button 
-            onClick={() => setSeccionActiva('monitor')}
-            className={`flex items-center gap-3 p-3 rounded transition-all duration-200 ${
-              seccionActiva === 'monitor' 
-                ? 'bg-blue-100 text-blue-800 font-semibold shadow-sm' 
-                : 'hover:bg-gray-200 text-gray-600'
-            }`}
-          >
-            <Activity size={20} />
-            <span>Monitor</span>
-          </button>
-          
-          <button 
-            onClick={() => setSeccionActiva('canales')}
-            className={`flex items-center gap-3 p-3 rounded transition-all duration-200 ${
-              seccionActiva === 'canales' 
-                ? 'bg-blue-100 text-blue-800 font-semibold shadow-sm' 
-                : 'hover:bg-gray-200 text-gray-600'
-            }`}
-          >
-            <Network size={20} />
-            <span>Canales</span>
-          </button>
 
-          <button 
-            onClick={() => setSeccionActiva('ajustes')}
-            className={`flex items-center gap-3 p-3 rounded transition-all duration-200 ${
-              seccionActiva === 'ajustes' 
-                ? 'bg-blue-100 text-blue-800 font-semibold shadow-sm' 
-                : 'hover:bg-gray-200 text-gray-600'
-            }`}
+        <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
+          {SECCIONES.map(({ id, label, icon: Icon }) => {
+            const activo = seccion === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setSeccion(id)}
+                className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                  activo
+                    ? 'bg-zinc-50 text-teal-700 font-medium'
+                    : 'text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800'
+                }`}
+              >
+                <span
+                  className={`absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-teal-500 transition-opacity ${
+                    activo ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+                <Icon size={17} strokeWidth={2} />
+                <span>{label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="px-3 py-4 border-t border-zinc-100">
+          <div className="px-3 pb-3 flex items-center gap-2 text-[11px] text-zinc-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
+            <span>Motor conectado</span>
+          </div>
+          <button
+            onClick={cerrarSesion}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 transition-colors"
           >
-            <Settings size={20} />
-            <span>Ajustes Generales</span>
+            <LogOut size={16} strokeWidth={2} />
+            <span>Cerrar sesión</span>
           </button>
         </div>
-      </nav>
+      </aside>
 
-      {/* Área Principal de Renderizado Dinámico */}
-      <main className="flex-1 p-8 overflow-y-auto bg-white">
-        
-        {seccionActiva === 'monitor' && (
-          <div className="h-full flex flex-col animate-fade-in">
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-gray-800">Monitor en Tiempo Real de Trazabilidad</h2>
-              <p className="text-sm text-gray-500 mt-1">Auditoría del ciclo de vida de los mensajes DICOM/HL7.</p>
-            </div>
-            <Monitor />
+      {/* Área principal */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="h-16 shrink-0 border-b border-zinc-200 bg-white/80 backdrop-blur px-8 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-900 leading-tight">{actual.titulo}</h2>
+            <p className="text-xs text-zinc-400">{actual.subtitulo}</p>
           </div>
-        )}
-
-        {seccionActiva === 'canales' && (
-          <div className="h-full flex flex-col animate-fade-in">
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-gray-800">Gestión de Canales y Scripts</h2>
-              <p className="text-sm text-gray-500 mt-1">Configuración de endpoints MLLP y reglas de mapeo en caliente.</p>
+          {seccion === 'monitor' && (
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+              </span>
+              En vivo
             </div>
-            {/* El componente Canales maneja internamente sus tarjetas de configuración colapsables */}
-            <Canales />
+          )}
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-8">
+          <div className="animate-fade-in max-w-6xl mx-auto">
+            {seccion === 'monitor' && <Monitor />}
+            {seccion === 'canales' && <Canales />}
+            {seccion === 'mapeo' && <Mapeos />}
           </div>
-        )}
-
-        {seccionActiva === 'ajustes' && (
-          <div className="h-full flex flex-col animate-fade-in">
-            <div className="mb-6">
-              <h2 className="text-2xl font-semibold text-gray-800">Ajustes Generales</h2>
-              <p className="text-sm text-gray-500 mt-1">Configuración global del motor de integración.</p>
-            </div>
-            <div className="border border-gray-200 rounded p-8 text-center text-gray-500 bg-gray-50">
-              Módulo de ajustes en desarrollo.
-            </div>
-          </div>
-        )}
-
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

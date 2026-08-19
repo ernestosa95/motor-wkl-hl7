@@ -1,35 +1,27 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from models import Usuario
-from passlib.context import CryptContext
+"""Crea o restablece el usuario 'admin'. Ejecutar una vez tras las migraciones.
 
-# 1. Definición estricta de la cadena de conexión a la BD correcta
-DATABASE_URL = "postgresql+psycopg2://usuario:usuario@localhost:5432/motordicom_db"
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    python -m core.crear_admin
 
-# 2. Inicialización de seguridad y sesión
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+Usa la misma DB y modelos que el resto del sistema (core.database / core.models).
+"""
+from core.database import SessionLocal, engine
+from core.models import Base, Usuario
+from core.auth import hash_password
+
+# Atajo de arranque: crea la tabla 'usuarios' si aún no existe.
+# En un flujo formal esto lo hace Alembic (ver instrucciones de migración).
+Base.metadata.create_all(bind=engine)
+
 db = SessionLocal()
-
 try:
-    # Print de control de trazabilidad
-    print(f"Auditando conexión... Destino: {engine.url.database}")
-    
-    # Búsqueda o creación del usuario
     user = db.query(Usuario).filter(Usuario.username == "admin").first()
-    
     if not user:
-        hashed_pw = pwd_context.hash("admin123")
-        nuevo_usuario = Usuario(username="admin", hashed_password=hashed_pw)
-        db.add(nuevo_usuario)
+        db.add(Usuario(username="admin", hashed_password=hash_password("admin123")))
         db.commit()
-        print("Éxito: Usuario 'admin' creado y encriptado.")
+        print("Usuario 'admin' creado (password: admin123).")
     else:
-        user.hashed_password = pwd_context.hash("admin123")
+        user.hashed_password = hash_password("admin123")
         db.commit()
-        print("Éxito: Contraseña del usuario 'admin' restablecida.")
-except Exception as e:
-    print(f"Error al interactuar con la base de datos: {e}")
+        print("Password de 'admin' restablecida a 'admin123'.")
 finally:
     db.close()

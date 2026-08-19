@@ -1,158 +1,152 @@
-import React, { useState } from 'react';
-import Editor from '@monaco-editor/react';
-import { ChevronDown, ChevronUp, Database, Network, UserPlus, FileText } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Database, UserPlus, FileText, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { apiFetch } from './Login';
 
-export default function Canales() {
-  // Estados independientes para optimizar el área de trabajo sobre el lienzo blanco
-  const [wklColapsada, setWklColapsada] = useState(true);
-  const [adtColapsada, setAdtColapsada] = useState(false);
-  const [ormColapsada, setOrmColapsada] = useState(false);
+const META = {
+  worklist_scu: { icon: Database, color: 'text-blue-600', dicom: true },
+  destino_adt:  { icon: UserPlus, color: 'text-violet-600', dicom: false },
+  destino_orm:  { icon: FileText, color: 'text-teal-600', dicom: false },
+};
 
-  const scriptJinjaMock = `MSH|^~\\&|DICOM_WKL|TECNOIMAGEN|HIS|HOSPITAL|{{ fecha }}||ORM^O01|{{ msg_id }}|P|2.5\nPID|1||{{ pid_3 }}||{{ pid_5 }}||{{ pid_7 }}|{{ pid_8 }}\nORC|NW|{{ obr_2 }}\nOBR|1|{{ obr_2 }}|{{ obr_3 }}|{{ obr_4 }}||||||||||||{{ obr_16 }}||||||||{{ obr_24 }}|||{{ obr_27 }}`;
+function CanalCard({ canal, onChange, onGuardar, onProbar, guardando, prueba, probando }) {
+  const meta = META[canal.clave] || {};
+  const Icon = meta.icon || Database;
 
   return (
-    <div className="flex flex-col gap-6 w-full">
-      
-      {/* Tarjeta Colapsable 1: Ingesta DICOM Worklist */}
-      <div className="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden transition-all duration-300">
-        <div 
-          className="bg-white px-6 py-4 flex justify-between items-center cursor-pointer border-b border-gray-100 hover:bg-gray-50 transition-colors"
-          onClick={() => setWklColapsada(!wklColapsada)}
-        >
-          <div className="flex items-center gap-3">
-            <Database size={18} className="text-blue-600" />
-            <h3 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Origen: Ingesta DICOM Worklist (C-FIND)</h3>
-          </div>
-          {wklColapsada ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronUp size={20} className="text-gray-400" />}
-        </div>
-        
-        {!wklColapsada && (
-          <div className="p-6 grid grid-cols-3 gap-6 bg-white">
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">IP del Servidor (SCP)</label>
-              <input 
-                type="text" 
-                defaultValue="192.168.1.100" 
-                className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">AETitle Origen</label>
-              <input 
-                type="text" 
-                defaultValue="MOTOR_WKL" 
-                className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Puerto DICOM</label>
-              <input 
-                type="number" 
-                defaultValue="104" 
-                className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-              />
-            </div>
-          </div>
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-100">
+        <Icon size={17} className={meta.color} />
+        <h3 className="text-sm font-semibold text-zinc-800">{canal.nombre}</h3>
+      </div>
+
+      <div className="p-5 grid gap-4" style={{ gridTemplateColumns: meta.dicom ? '1fr 1fr' : '1fr' }}>
+        <Field label="Host / IP" value={canal.host}
+               onChange={(v) => onChange('host', v)} />
+        <Field label="Puerto" type="number" value={canal.puerto}
+               onChange={(v) => onChange('puerto', parseInt(v || '0', 10))} />
+        {meta.dicom && (
+          <>
+            <Field label="AE Title destino" value={canal.aet || ''}
+                   onChange={(v) => onChange('aet', v)} />
+            <Field label="AE Title propio" value={canal.aet_local || ''}
+                   onChange={(v) => onChange('aet_local', v)} />
+          </>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        {/* Tarjeta Colapsable 2: Emisión MLLP (ADT) */}
-        <div className="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden transition-all duration-300">
-          <div 
-            className="bg-white px-6 py-4 flex justify-between items-center cursor-pointer border-b border-gray-100 hover:bg-gray-50 transition-colors"
-            onClick={() => setAdtColapsada(!adtColapsada)}
-          >
-            <div className="flex items-center gap-3">
-              <UserPlus size={18} className="text-purple-600" />
-              <h3 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Destino MLLP: Demográficos (ADT)</h3>
-            </div>
-            {adtColapsada ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronUp size={20} className="text-gray-400" />}
-          </div>
-          
-          {!adtColapsada && (
-            <div className="p-6 flex flex-col gap-4 bg-white">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Host / IP (Ej. HIS / MPI)</label>
-                <input 
-                  type="text" 
-                  defaultValue="10.0.0.50" 
-                  className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Puerto TCP</label>
-                <input 
-                  type="number" 
-                  defaultValue="2575" 
-                  className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-                />
-              </div>
-            </div>
+      <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-zinc-100 bg-zinc-50/50">
+        <div className="min-h-[20px] text-xs">
+          {prueba && (
+            <span className={`inline-flex items-center gap-1.5 ${prueba.ok ? 'text-teal-700' : 'text-rose-700'}`}>
+              {prueba.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+              {prueba.mensaje}
+            </span>
           )}
         </div>
-
-        {/* Tarjeta Colapsable 3: Emisión MLLP (ORM) */}
-        <div className="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden transition-all duration-300">
-          <div 
-            className="bg-white px-6 py-4 flex justify-between items-center cursor-pointer border-b border-gray-100 hover:bg-gray-50 transition-colors"
-            onClick={() => setOrmColapsada(!ormColapsada)}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onProbar}
+            disabled={probando}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-60 transition-colors"
           >
-            <div className="flex items-center gap-3">
-              <FileText size={18} className="text-emerald-600" />
-              <h3 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Destino MLLP: Órdenes (ORM)</h3>
-            </div>
-            {ormColapsada ? <ChevronDown size={20} className="text-gray-400" /> : <ChevronUp size={20} className="text-gray-400" />}
-          </div>
-          
-          {!ormColapsada && (
-            <div className="p-6 flex flex-col gap-4 bg-white">
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Host / IP (Ej. RIS)</label>
-                <input 
-                  type="text" 
-                  defaultValue="10.0.0.51" 
-                  className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Puerto TCP</label>
-                <input 
-                  type="number" 
-                  defaultValue="2576" 
-                  className="w-full border border-gray-200 rounded-md p-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow shadow-sm" 
-                />
-              </div>
-            </div>
-          )}
+            {probando ? <Loader2 size={14} className="animate-spin" /> : null}
+            Probar conexión
+          </button>
+          <button
+            onClick={onGuardar}
+            disabled={guardando}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-60 transition-colors"
+          >
+            {guardando ? 'Guardando…' : 'Guardar'}
+          </button>
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Tarjeta del Editor de Mapeo (Jinja2) - Fija para edición en caliente */}
-      <div className="border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden flex-1 flex flex-col min-h-[500px]">
-        <div className="bg-white px-6 py-4 border-b border-gray-100 flex justify-between items-center">
-          <h3 className="text-sm font-semibold text-gray-800 uppercase tracking-wide">Editor en Caliente: Transformación DICOM a HL7</h3>
-          <select className="text-sm border border-gray-200 rounded p-1 text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="orm">Plantilla ORM^O01</option>
-            <option value="adt">Plantilla ADT^A01</option>
-          </select>
-        </div>
-        <div className="flex-1 p-2 bg-gray-50 border-t border-gray-100">
-          <Editor
-            height="100%"
-            defaultLanguage="plaintext"
-            defaultValue={scriptJinjaMock}
-            theme="vs-light"
-            options={{ 
-              minimap: { enabled: false }, 
-              fontSize: 14,
-              scrollBeyondLastLine: false,
-              padding: { top: 16 }
-            }}
-          />
-        </div>
-      </div>
+function Field({ label, value, onChange, type = 'text' }) {
+  return (
+    <div>
+      <label className="block text-[11px] font-medium uppercase tracking-wider text-zinc-400 mb-1.5">{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 transition-shadow"
+      />
+    </div>
+  );
+}
 
+export default function Canales() {
+  const [canales, setCanales] = useState([]);
+  const [guardando, setGuardando] = useState({});
+  const [probando, setProbando] = useState({});
+  const [pruebas, setPruebas] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch('/api/v1/canales');
+        if (res.ok) setCanales(await res.json());
+      } catch (e) {
+        console.error('Error al cargar canales', e);
+      }
+    })();
+  }, []);
+
+  const editar = (clave, campo, valor) => {
+    setCanales((prev) => prev.map((c) => (c.clave === clave ? { ...c, [campo]: valor } : c)));
+  };
+
+  const guardar = async (canal) => {
+    setGuardando((s) => ({ ...s, [canal.clave]: true }));
+    try {
+      await apiFetch(`/api/v1/canales/${canal.clave}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: canal.host, puerto: canal.puerto,
+          aet: canal.aet, aet_local: canal.aet_local,
+        }),
+      });
+      setPruebas((p) => ({ ...p, [canal.clave]: { ok: true, mensaje: 'Configuración guardada.' } }));
+    } catch {
+      setPruebas((p) => ({ ...p, [canal.clave]: { ok: false, mensaje: 'No se pudo guardar.' } }));
+    } finally {
+      setGuardando((s) => ({ ...s, [canal.clave]: false }));
+    }
+  };
+
+  const probar = async (canal) => {
+    setProbando((s) => ({ ...s, [canal.clave]: true }));
+    setPruebas((p) => ({ ...p, [canal.clave]: null }));
+    try {
+      const res = await apiFetch(`/api/v1/canales/${canal.clave}/test`, { method: 'POST' });
+      const data = await res.json();
+      setPruebas((p) => ({ ...p, [canal.clave]: data }));
+    } catch {
+      setPruebas((p) => ({ ...p, [canal.clave]: { ok: false, mensaje: 'Error al ejecutar la prueba.' } }));
+    } finally {
+      setProbando((s) => ({ ...s, [canal.clave]: false }));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      {canales.map((canal) => (
+        <CanalCard
+          key={canal.clave}
+          canal={canal}
+          onChange={(campo, valor) => editar(canal.clave, campo, valor)}
+          onGuardar={() => guardar(canal)}
+          onProbar={() => probar(canal)}
+          guardando={!!guardando[canal.clave]}
+          probando={!!probando[canal.clave]}
+          prueba={pruebas[canal.clave]}
+        />
+      ))}
     </div>
   );
 }
