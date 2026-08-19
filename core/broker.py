@@ -1,40 +1,46 @@
 import os
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
-from core.auditoria import actualizar_estado, guardar_hl7
+from core.auditoria import actualizar_estado
 from core.emisor_mllp import enviar_mensaje_mllp
 from core.models import EstadoMensaje
-from core import config_repo
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-huey = SqliteHuey(filename=os.path.join(BASE_DIR, "motor_queue.db"))
-
-FALLBACK = {"host": "127.0.0.1", "puerto": 2575}
 
 
-def _destino(clave):
-    canal = config_repo.obtener_canal(clave)
-    if canal:
-        return canal["host"], int(canal["puerto"])
-    return FALLBACK["host"], FALLBACK["puerto"]
+def _data_dir() -> str:
+    """
+    Directorio escribible para la cola SQLite de Huey.
+    En Windows empaquetado corre como servicio bajo Program Files (solo lectura),
+    por eso la cola debe vivir en ProgramData\\MotorDICOM (via MOTORDICOM_DATA).
+    """
+    root = os.environ.get(
+        "MOTORDICOM_DATA",
+        os.path.join(os.environ.get("ProgramData", os.getcwd()), "MotorDICOM"),
+    )
+    os.makedirs(root, exist_ok=True)
+    return root
 
 
-@huey.task(retries=3, retry_delay=10)
+# Cola persistente en ubicacion escribible (antes: junto al codigo -> fallaba como servicio)
+huey = SqliteHuey(filename=os.path.join(_data_dir(), "motor_queue.db"))
+
+
+@huey.task(retries=3, retry_delay=10)  # 3 intentos con decaimiento temporal
 def tarea_procesar_orden(correlation_id, payload_dicom):
-    """Transforma a ADT + ORM, guarda el HL7 y despacha cada uno a su destino."""
+    """
+    Worker asíncrono: Transforma el payload crudo y lo despacha.
+    """
     try:
-        hl7_adt = procesar_transformacion(payload_dicom, "ADT")
-        hl7_orm = procesar_transformacion(payload_dicom, "ORM")
+        # 1. Transformación a HL7 v2.5
+        hl7_generado = procesar_transformacion(payload_dicom, "ORM")
 
+        # Actualización de trazabilidad
         actualizar_estado(correlation_id, EstadoMensaje.TRANSFORMADO)
-        guardar_hl7(correlation_id, {"adt": hl7_adt, "orm": hl7_orm})
 
-        host_adt, puerto_adt = _destino("destino_adt")
-        enviar_mensaje_mllp(correlation_id, hl7_adt, host=host_adt, puerto=puerto_adt)
-
-        host_orm, puerto_orm = _destino("destino_orm")
-        enviar_mensaje_mllp(correlation_id, hl7_orm, host=host_orm, puerto=puerto_orm)
+        # 2. Emisión vía socket TCP/IP
+        enviar_mensaje_mllp(correlation_id, hl7_generado)
 
     except Exception as e:
         print(f"[!] Fallo en el worker para {correlation_id}: {e}")
+        # Huey gestionará el reintento. Si falla definitivamente, el emisor o el worker
+        # se encargarán de asentar ERROR_PERMANENTE.
         raise e

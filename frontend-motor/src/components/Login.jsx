@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const API = 'http://localhost:8000';
+const API = '';
 
 // Helper: hace fetch inyectando el token JWT y redirige a login si expira (401).
 export async function apiFetch(path, options = {}) {
