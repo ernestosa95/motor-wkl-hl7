@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
-const API = 'http://localhost:8000';
+// Rutas relativas: FastAPI sirve el front y la API en el mismo origen.
+const API = '';
 
 // Helper: hace fetch inyectando el token JWT y redirige a login si expira (401).
 export async function apiFetch(path, options = {}) {
@@ -42,7 +43,9 @@ export default function Login({ onLogin }) {
       }
       const data = await res.json();
       localStorage.setItem('token', data.access_token);
-      onLogin();
+      // Propagamos el flag de cambio obligatorio hacia App.jsx
+      localStorage.setItem('debe_cambiar_password', String(!!data.debe_cambiar_password));
+      onLogin(data.debe_cambiar_password);
     } catch {
       setError('No se pudo conectar con el servidor.');
     } finally {
@@ -55,7 +58,6 @@ export default function Login({ onLogin }) {
       <div className="w-full max-w-sm bg-white border border-gray-200 rounded-lg shadow-sm p-8 flex flex-col gap-4">
         <h1 className="text-lg font-semibold text-gray-800">Motor de Integración DICOM-HL7</h1>
         <p className="text-sm text-gray-500 -mt-2">Iniciar sesión</p>
-
         <input
           className="border border-gray-200 rounded-md p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           placeholder="Usuario"
@@ -71,9 +73,7 @@ export default function Login({ onLogin }) {
           onChange={(e) => setPassword(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
         />
-
         {error && <p className="text-sm text-red-600">{error}</p>}
-
         <button
           onClick={submit}
           disabled={cargando}

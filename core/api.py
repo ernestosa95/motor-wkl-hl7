@@ -7,11 +7,11 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
-from core.auth import autenticar, crear_token, get_current_user, get_db
+from core.auth import autenticar, crear_token, get_current_user, get_db, hash_password
 from core import config_repo, mapeo_repo
 from core.conectividad import test_dicom_echo, test_mllp
 
-app = FastAPI(title="Motor HL7 API", version="1.3")
+app = FastAPI(title="Motor HL7 API", version="1.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,7 +36,33 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="Usuario o contraseña incorrectos")
-    return {"access_token": crear_token(user.username), "token_type": "bearer"}
+    return {
+        "access_token": crear_token(user.username),
+        "token_type": "bearer",
+        "debe_cambiar_password": bool(user.debe_cambiar_password),
+    }
+
+
+class CambioPasswordIn(BaseModel):
+    password_nueva: str
+
+
+@app.post("/api/v1/auth/cambiar-password")
+def cambiar_password(body: CambioPasswordIn,
+                     db: Session = Depends(get_db),
+                     user: Usuario = Depends(get_current_user)):
+    nueva = (body.password_nueva or "").strip()
+    if len(nueva) < 8:
+        raise HTTPException(status_code=400,
+                            detail="La contraseña debe tener al menos 8 caracteres")
+    # Recuperamos el usuario en ESTA sesión para poder modificarlo
+    u = db.query(Usuario).filter(Usuario.username == user.username).first()
+    if u is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    u.hashed_password = hash_password(nueva)
+    u.debe_cambiar_password = False
+    db.commit()
+    return {"ok": True}
 
 
 # ---------- Trazabilidad ----------
