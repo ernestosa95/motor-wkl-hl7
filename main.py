@@ -4,7 +4,7 @@ MotorDICOM - Entrypoint unificado (dispatcher por subcomando)
     MotorDICOM.exe api          -> API FastAPI + SPA React (uvicorn, :8000)
     MotorDICOM.exe worker       -> consumidor Huey (transformacion + emision)
     MotorDICOM.exe ingesta      -> loop de ingesta DICOM (C-FIND worklist)
-    MotorDICOM.exe migrate      -> aplica migraciones Alembic y sale
+    MotorDICOM.exe migrate      -> aplica migraciones Alembic (idempotente) y sale
     MotorDICOM.exe crear-admin  -> siembra el usuario admin inicial y sale
 """
 
@@ -97,13 +97,42 @@ def cmd_ingesta():
 
 
 def cmd_migrate():
+    """
+    Aplica migraciones Alembic de forma idempotente y tolerante a bases
+    preexistentes.
+
+    Si la base ya tiene las tablas del modelo pero NO tiene el historial de
+    Alembic registrado (caso tipico de reinstalar sobre una instalacion vieja),
+    en vez de fallar con 'DuplicateTable' se "sella" (stamp) al head y no se
+    re-ejecutan las migraciones. Asi el instalador funciona igual en maquina
+    limpia (upgrade normal) que sobre una base existente (adopcion via stamp).
+    """
     from alembic.config import Config
     from alembic import command
-    from core.database import DATABASE_URL
+    from sqlalchemy import inspect
+    from core.database import DATABASE_URL, engine
 
     cfg = Config()
     cfg.set_main_option("script_location", resource_path("alembic"))
     cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+    insp = inspect(engine)
+    tablas = set(insp.get_table_names())
+    tiene_alembic = "alembic_version" in tablas
+    # Tablas nucleo del modelo que indican una base ya inicializada por fuera de Alembic
+    tablas_modelo = {"registro_trazabilidad", "usuarios", "canales", "mapeos"}
+    base_preexistente = bool(tablas_modelo & tablas)
+
+    if base_preexistente and not tiene_alembic:
+        # La base ya existe pero Alembic no la conoce -> adoptarla sin recrear.
+        logging.warning(
+            "Base preexistente sin historial Alembic; se sella (stamp) al head "
+            "en vez de recrear tablas."
+        )
+        command.stamp(cfg, "head")
+        logging.info("Base sellada al head. No se re-ejecutaron migraciones.")
+        return
+
     logging.info("Aplicando migraciones Alembic (upgrade head)...")
     command.upgrade(cfg, "head")
     logging.info("Migraciones aplicadas correctamente.")

@@ -4,8 +4,8 @@ Revision ID: a1b2c3d4e5f6
 Revises: 31a398d3b433
 Create Date: 2026-08-19
 
-Crea la tabla de usuarios (id UUID, alineada con core.models.Usuario).
-Incluye 'activo' y 'debe_cambiar_password'.
+Crea la tabla de usuarios (id UUID). Idempotente: solo crea la tabla si no
+existe, para tolerar reinstalaciones sobre bases preexistentes.
 """
 from alembic import op
 import sqlalchemy as sa
@@ -20,6 +20,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    if 'usuarios' in insp.get_table_names():
+        # La tabla ya existe (reinstalacion / base adoptada): no recrear.
+        return
+
     op.create_table(
         'usuarios',
         sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
