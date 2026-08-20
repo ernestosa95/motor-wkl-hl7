@@ -1,8 +1,21 @@
-# Archivos de base de datos local y temporales
-*.db
-*.db-shm
-*.db-wal
-*.sqlite3
+# Artefactos de compilación (se regeneran, no van al repo)
+build/
+dist/
+dist_installer/
+*.exe
 
-# Variables de entorno
+# Entorno Python
+.venv/
+__pycache__/
+*.pyc
+
+# Binarios vendor (se descargan aparte)
+vendor/
+
+# Frontend
+frontend-motor/node_modules/
+frontend-motor/dist/
+
+# Datos y config local
+*.db
 .env
