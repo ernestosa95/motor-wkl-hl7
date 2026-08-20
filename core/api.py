@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
 from core.auth import autenticar, crear_token, get_current_user, get_db, hash_password
-from core import config_repo, mapeo_repo
+from core import config_repo, mapeo_repo, auditoria
 from core.conectividad import test_dicom_echo, test_mllp
 
-app = FastAPI(title="Motor HL7 API", version="1.4")
+app = FastAPI(title="Motor HL7 API", version="1.6")
 
 app.add_middleware(
     CORSMiddleware,
@@ -55,7 +55,6 @@ def cambiar_password(body: CambioPasswordIn,
     if len(nueva) < 8:
         raise HTTPException(status_code=400,
                             detail="La contraseña debe tener al menos 8 caracteres")
-    # Recuperamos el usuario en ESTA sesión para poder modificarlo
     u = db.query(Usuario).filter(Usuario.username == user.username).first()
     if u is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -99,6 +98,45 @@ def obtener_hl7(correlation_id: str, db: Session = Depends(get_db),
         "estado": r.estado.name,
         "hl7": r.payload_hl7 or {},
     }
+
+
+@app.get("/api/v1/trazabilidad/{correlation_id}/auditoria")
+def auditoria_orden(correlation_id: str, db: Session = Depends(get_db),
+                    _user: Usuario = Depends(get_current_user)):
+    """Vista de auditoría: datos de ingreso, estado actual, HL7 y detalle de error."""
+    r = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id
+    ).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    return {
+        "id": str(r.correlation_id),
+        "accession": r.accession_number,
+        "paciente": r.patient_id,
+        "modalidad": r.modalidad,
+        "estado": r.estado.name,
+        "reintentos": r.reintentos,
+        "ingresado": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
+        "actualizado": r.updated_at.strftime("%Y-%m-%d %H:%M:%S") if r.updated_at else None,
+        "payload_dicom": r.payload_dicom_raw or {},
+        "hl7": r.payload_hl7 or {},
+        "detalles_error": r.detalles_error or None,
+    }
+
+
+@app.post("/api/v1/trazabilidad/{correlation_id}/reprocesar")
+def reprocesar_orden(correlation_id: str, db: Session = Depends(get_db),
+                     _user: Usuario = Depends(get_current_user)):
+    r = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id
+    ).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    ok = auditoria.reprocesar(correlation_id)
+    if not ok:
+        raise HTTPException(status_code=400,
+                            detail="No se pudo reprocesar (sin payload original)")
+    return {"ok": True}
 
 
 @app.get("/api/v1/health/channels")
