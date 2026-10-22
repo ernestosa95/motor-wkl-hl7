@@ -47,7 +47,8 @@ def crear_token(username: str) -> str:
     return jwt.encode({"sub": username, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Usuario:
+def get_usuario_token(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Usuario:
+    """Usuario del token, aunque todavia tenga pendiente el cambio de contraseña."""
     cred_exc = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Credenciales inválidas",
@@ -64,4 +65,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     user = db.query(Usuario).filter(Usuario.username == username).first()
     if not user or not user.activo:
         raise cred_exc
+    return user
+
+
+def get_current_user(user: Usuario = Depends(get_usuario_token)) -> Usuario:
+    """Usuario habilitado para operar: exige haber cambiado la contraseña inicial."""
+    if user.debe_cambiar_password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="debe_cambiar_password",
+        )
     return user

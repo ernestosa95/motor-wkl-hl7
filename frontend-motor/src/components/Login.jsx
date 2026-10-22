@@ -14,7 +14,16 @@ export async function apiFetch(path, options = {}) {
   });
   if (res.status === 401) {
     localStorage.removeItem('token');
+    localStorage.removeItem('debe_cambiar_password');
     window.location.reload();
+  }
+  if (res.status === 403) {
+    // La API exige cambiar la contraseña inicial antes de operar.
+    const data = await res.clone().json().catch(() => ({}));
+    if (data.detail === 'debe_cambiar_password') {
+      localStorage.setItem('debe_cambiar_password', 'true');
+      window.location.reload();
+    }
   }
   return res;
 }
@@ -41,7 +50,8 @@ export default function Login({ onLogin }) {
       }
       const data = await res.json();
       localStorage.setItem('token', data.access_token);
-      onLogin();
+      localStorage.setItem('debe_cambiar_password', String(!!data.debe_cambiar_password));
+      onLogin(!!data.debe_cambiar_password);
     } catch {
       setError('No se pudo conectar con el servidor.');
     } finally {

@@ -29,6 +29,18 @@ SENDING_APP = "MOTOR_DICOM"
 SENDING_FACILITY = "TECNOIMAGEN"
 
 
+def escapar(valor) -> str:
+    """Escapa los delimitadores HL7 (| ~ \\ &) y quita saltos de linea.
+
+    El '^' se conserva a proposito: en DICOM (PN) tambien separa componentes
+    (APELLIDO^NOMBRE) y se traslada tal cual al componente HL7.
+    """
+    s = str(valor)
+    s = s.replace("\\", "\\E\\")  # primero la barra, para no re-escapar lo siguiente
+    s = s.replace("|", "\\F\\").replace("~", "\\R\\").replace("&", "\\T\\")
+    return s.replace("\r", " ").replace("\n", " ")
+
+
 def _set_campo(segmentos, disponibles, campo, valor):
     try:
         seg, idx = campo.split("-")
@@ -36,7 +48,7 @@ def _set_campo(segmentos, disponibles, campo, valor):
     except (ValueError, AttributeError):
         return
     if seg in disponibles:
-        segmentos[seg][idx] = valor
+        segmentos[seg][idx] = escapar(valor)
 
 
 def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str) -> str:

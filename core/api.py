@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
-from core.auth import autenticar, crear_token, get_current_user, get_db, hash_password
+from core.auth import autenticar, crear_token, get_current_user, get_usuario_token, get_db, hash_password
 from core import config_repo, mapeo_repo, auditoria
 from core.conectividad import test_dicom_echo, test_mllp
 
@@ -50,7 +50,7 @@ class CambioPasswordIn(BaseModel):
 @app.post("/api/v1/auth/cambiar-password")
 def cambiar_password(body: CambioPasswordIn,
                      db: Session = Depends(get_db),
-                     user: Usuario = Depends(get_current_user)):
+                     user: Usuario = Depends(get_usuario_token)):
     nueva = (body.password_nueva or "").strip()
     if len(nueva) < 8:
         raise HTTPException(status_code=400,
@@ -132,6 +132,12 @@ def reprocesar_orden(correlation_id: str, db: Session = Depends(get_db),
     ).first()
     if r is None:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
+    if r.estado == EstadoMensaje.ERROR_EMISION:
+        # Ya hay un reintento automatico en cola; reprocesar ahora duplicaria el envio.
+        raise HTTPException(status_code=409,
+                            detail="Hay un reintento automatico pendiente para esta orden")
+    if r.estado == EstadoMensaje.COMPLETADO:
+        raise HTTPException(status_code=409, detail="La orden ya fue completada")
     ok = auditoria.reprocesar(correlation_id)
     if not ok:
         raise HTTPException(status_code=400,
