@@ -1,4 +1,6 @@
 import uuid
+from sqlalchemy.orm.attributes import flag_modified
+
 from core.database import SessionLocal
 from core.models import RegistroTrazabilidad, EstadoMensaje
 
@@ -28,11 +30,48 @@ def guardar_hl7(correlation_id: uuid.UUID, mensajes: dict):
             RegistroTrazabilidad.correlation_id == correlation_id
         ).first()
         if registro:
-            registro.payload_hl7 = mensajes
+            registro.payload_hl7 = dict(mensajes)
+            flag_modified(registro, "payload_hl7")
             db.commit()
     except Exception as e:
         db.rollback()
         print(f"[!] Error al guardar HL7: {e}")
+    finally:
+        db.close()
+
+
+def obtener_hl7(correlation_id: uuid.UUID):
+    """Devuelve el payload_hl7 guardado (ADT, ORM y envios confirmados) o None."""
+    db = SessionLocal()
+    try:
+        registro = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).first()
+        return dict(registro.payload_hl7) if registro and registro.payload_hl7 else None
+    finally:
+        db.close()
+
+
+def registrar_fallo(correlation_id: uuid.UUID, final: bool, detalle: dict):
+    """Registra un intento fallido: suma un reintento y guarda el motivo.
+
+    final=False -> ERROR_EMISION (queda un reintento automatico en cola).
+    final=True  -> ERROR_PERMANENTE (no quedan reintentos; requiere Reprocesar).
+    """
+    db = SessionLocal()
+    try:
+        registro = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).first()
+        if registro:
+            registro.estado = EstadoMensaje.ERROR_PERMANENTE if final else EstadoMensaje.ERROR_EMISION
+            registro.reintentos = (registro.reintentos or 0) + 1
+            registro.detalles_error = detalle
+            db.commit()
+            print(f"[*] Auditoría: {correlation_id} -> {registro.estado.name}")
+    except Exception as e:
+        db.rollback()
+        print(f"[!] Error al registrar fallo: {e}")
     finally:
         db.close()
 
@@ -76,7 +115,8 @@ def reprocesar(correlation_id: str):
     Re-despacha una orden fallida al broker sin crear un registro nuevo.
 
     Reutiliza el payload_dicom_raw ya guardado y el mismo correlation_id, para
-    no chocar con la deduplicacion ni duplicar filas en el monitor.
+    no chocar con la deduplicacion ni duplicar filas en el monitor. El HL7 ya
+    generado se conserva: el broker reenvia solo lo que no fue aceptado.
     Devuelve True si se re-encolo; False si el registro no existe o no tiene payload.
     """
     # Import local para evitar import circular (broker -> auditoria -> broker)

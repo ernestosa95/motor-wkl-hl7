@@ -84,11 +84,13 @@ export default function AuditoriaModal({ orden, onClose }) {
             </div>
 
             {data.detalles_error && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
-                <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-rose-500">Detalle del error</p>
-                <p className="text-sm text-rose-800 break-words">{data.detalles_error.mensaje}</p>
+              <div className={`rounded-lg border p-3 ${esError ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
+                <p className={`mb-1 text-[11px] font-medium uppercase tracking-wider ${esError ? 'text-rose-500' : 'text-amber-600'}`}>
+                  {esError ? 'Detalle del error' : 'Error de un intento anterior (resuelto)'}
+                </p>
+                <p className={`text-sm break-words ${esError ? 'text-rose-800' : 'text-amber-800'}`}>{data.detalles_error.mensaje}</p>
                 {data.detalles_error.cuando && (
-                  <p className="mt-1 font-mono text-xs text-rose-400">{data.detalles_error.cuando}</p>
+                  <p className={`mt-1 font-mono text-xs ${esError ? 'text-rose-400' : 'text-amber-500'}`}>{data.detalles_error.cuando}</p>
                 )}
               </div>
             )}

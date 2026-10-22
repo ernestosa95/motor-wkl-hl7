@@ -19,3 +19,5 @@ frontend-motor/dist/
 # Datos y config local
 *.db
 .env
+# Credenciales / scripts locales
+usuario.txt

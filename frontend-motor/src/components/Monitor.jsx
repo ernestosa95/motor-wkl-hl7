@@ -82,7 +82,11 @@ export default function Monitor() {
   const reprocesar = async (orden) => {
     setReprocesando((s) => ({ ...s, [orden.id]: true }));
     try {
-      await apiFetch(`/api/v1/trazabilidad/${orden.id}/reprocesar`, { method: 'POST' });
+      const res = await apiFetch(`/api/v1/trazabilidad/${orden.id}/reprocesar`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        window.alert(data.detail || 'No se pudo reprocesar la orden.');
+      }
       await fetchTrazabilidad();
     } catch (e) {
       console.error('Error al reprocesar', e);

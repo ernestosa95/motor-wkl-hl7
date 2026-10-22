@@ -1,11 +1,11 @@
+"""Emisión HL7 sobre MLLP con validación del ACK.
+
+Este módulo solo envía y valida: no toca la base. El estado del registro
+(COMPLETADO / ERROR_EMISION / ERROR_PERMANENTE) lo decide el broker, que es
+quien conoce cuántos reintentos quedan.
+"""
 import socket
 import logging
-import datetime
-
-from core.database import SessionLocal
-from core.models import RegistroTrazabilidad, EstadoMensaje
-from core.auditoria import actualizar_estado
-from core import config_repo
 
 log = logging.getLogger(__name__)
 
@@ -14,64 +14,70 @@ VT = b'\x0b'
 FS = b'\x1c'
 CR = b'\x0d'
 
-
-def _destino(clave_canal: str = "destino_orm"):
-    canal = config_repo.obtener_canal(clave_canal)
-    if canal and canal.get("host") and canal.get("puerto"):
-        return canal["host"], int(canal["puerto"])
-    return "127.0.0.1", 2575
+MAX_ACK_BYTES = 1024 * 1024
 
 
-def _guardar_error(correlation_id, texto: str):
-    """Persiste el motivo del fallo en detalles_error para la auditoría."""
-    db = SessionLocal()
-    try:
-        r = db.query(RegistroTrazabilidad).filter(
-            RegistroTrazabilidad.correlation_id == correlation_id
-        ).first()
-        if r:
-            r.detalles_error = {
-                "mensaje": str(texto),
-                "cuando": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            db.commit()
-    except Exception as e:
-        db.rollback()
-        log.error("No se pudo guardar detalles_error para %s: %s", correlation_id, e)
-    finally:
-        db.close()
+class ErrorEmision(Exception):
+    """Falla de conexión, ACK negativo o ACK que no corresponde al mensaje."""
 
 
-def enviar_mensaje_mllp(correlation_id, payload_hl7, host=None, puerto=None,
-                        clave_canal="destino_orm"):
+def control_id(payload_hl7: str) -> str:
+    """MSH-10 (Message Control ID) del mensaje."""
+    msh = payload_hl7.split("\r", 1)[0].split("|")
+    return msh[9] if len(msh) > 9 else ""
+
+
+def _leer_trama(sock: socket.socket) -> bytes:
+    """Lee una trama MLLP completa (VT ... FS CR), aunque llegue en varios paquetes."""
+    buffer = b""
+    while FS not in buffer:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise ErrorEmision("El destino cerró la conexión sin enviar un ACK completo.")
+        buffer += chunk
+        if len(buffer) > MAX_ACK_BYTES:
+            raise ErrorEmision("ACK demasiado grande o sin delimitador MLLP.")
+    inicio = buffer.find(VT)
+    return buffer[inicio + 1 if inicio >= 0 else 0:buffer.find(FS)]
+
+
+def _segmento_msa(ack: str):
+    for linea in ack.replace("\n", "\r").split("\r"):
+        if linea.startswith("MSA"):
+            return linea.split("|")
+    return None
+
+
+def enviar_mensaje_mllp(payload_hl7: str, host: str, puerto: int, timeout: float = 15.0) -> str:
+    """Envía el mensaje y valida el ACK. Devuelve el ACK como texto.
+
+    Lanza ErrorEmision si no hay conexión, si el ACK es negativo (AE/AR/CE/CR)
+    o si no corresponde al mensaje enviado (MSA-2 distinto de MSH-10).
     """
-    Envía el mensaje HL7 encapsulado en MLLP y espera el ACK síncrono.
-    Guarda el motivo del fallo en detalles_error para auditoría.
-    """
-    if host is None or puerto is None:
-        host, puerto = _destino(clave_canal)
-
-    mensaje_bytes = VT + payload_hl7.encode('utf-8') + FS + CR
-
+    esperado = control_id(payload_hl7)
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(15.0)
-            s.connect((host, puerto))
-            s.sendall(mensaje_bytes)
-            ack_data = s.recv(4096)
-    except Exception as e:
-        actualizar_estado(correlation_id, EstadoMensaje.ERROR_EMISION)
-        _guardar_error(correlation_id, f"Fallo de conexion a {host}:{puerto} - {e}")
-        log.error("Fallo de conexion MLLP a %s:%s para %s: %s",
-                  host, puerto, correlation_id, e)
-        raise e
+        with socket.create_connection((host, int(puerto)), timeout=timeout) as s:
+            s.settimeout(timeout)
+            s.sendall(VT + payload_hl7.encode('utf-8') + FS + CR)
+            ack = _leer_trama(s).decode('utf-8', errors='replace')
+    except ErrorEmision:
+        raise
+    except OSError as e:
+        raise ErrorEmision(f"Fallo de conexion a {host}:{puerto} - {e}") from e
 
-    if b"MSA|AA" in ack_data:
-        actualizar_estado(correlation_id, EstadoMensaje.COMPLETADO)
-        log.info("ACK recibido. Orden %s COMPLETADA.", correlation_id)
-    else:
-        actualizar_estado(correlation_id, EstadoMensaje.ERROR_PERMANENTE)
-        detalle = ack_data.decode('utf-8', errors='replace')[:200]
-        _guardar_error(correlation_id, f"NACK o respuesta invalida del destino: {detalle}")
-        log.error("NACK/respuesta invalida del destino para %s: %r",
-                  correlation_id, ack_data[:120])
+    msa = _segmento_msa(ack)
+    if msa is None or len(msa) < 2:
+        raise ErrorEmision(f"Respuesta sin segmento MSA: {ack[:200]!r}")
+
+    codigo = msa[1]
+    if codigo not in ("AA", "CA"):
+        texto = msa[3] if len(msa) > 3 else ""
+        raise ErrorEmision(f"ACK negativo {codigo} del destino. {texto}".strip())
+
+    recibido = msa[2] if len(msa) > 2 else ""
+    if recibido != esperado:
+        raise ErrorEmision(
+            f"El ACK no corresponde al mensaje enviado (MSA-2={recibido!r}, MSH-10={esperado!r})."
+        )
+    log.debug("ACK %s recibido de %s:%s para MSH-10=%s", codigo, host, puerto, esperado)
+    return ack

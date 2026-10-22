@@ -4,6 +4,7 @@ import Monitor from './components/Monitor';
 import Canales from './components/Canales';
 import Mapeos from './components/Mapeos';
 import Login from './components/Login';
+import CambiarPassword from './components/CambiarPassword';
 
 const SECCIONES = [
   { id: 'monitor', label: 'Monitor', icon: Activity,
@@ -17,13 +18,37 @@ const SECCIONES = [
 export default function App() {
   const [seccion, setSeccion] = useState('monitor');
   const [logueado, setLogueado] = useState(!!localStorage.getItem('token'));
+  const [debeCambiar, setDebeCambiar] = useState(
+    localStorage.getItem('debe_cambiar_password') === 'true'
+  );
 
   const cerrarSesion = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('debe_cambiar_password');
     setLogueado(false);
   };
 
-  if (!logueado) return <Login onLogin={() => setLogueado(true)} />;
+  if (!logueado) {
+    return (
+      <Login
+        onLogin={(debe) => {
+          setDebeCambiar(debe);
+          setLogueado(true);
+        }}
+      />
+    );
+  }
+
+  if (debeCambiar) {
+    return (
+      <CambiarPassword
+        onListo={() => {
+          localStorage.setItem('debe_cambiar_password', 'false');
+          setDebeCambiar(false);
+        }}
+      />
+    );
+  }
 
   const actual = SECCIONES.find((s) => s.id === seccion);
 
