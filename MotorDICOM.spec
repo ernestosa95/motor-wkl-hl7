@@ -3,7 +3,7 @@
 PyInstaller spec para MotorDICOM (modo onedir).
 Compilar con:   pyinstaller MotorDICOM.spec --noconfirm
 
-Requisitos de build (ver BUILD.md):
+Requisitos de build (o usar build.bat, que hace todo):
   - El front ya compilado en ./static  (salida de `npm run build`)
   - Las migraciones Alembic en ./core/alembic
 """

@@ -1,7 +1,7 @@
 ; =============================================================================
 ;  MotorDICOM - Instalador (Inno Setup 6+)
 ;  Compilar con:  iscc MotorDICOM.iss
-;  Genera:        dist_installer\MotorDICOM-Setup.exe
+;  Genera:        dist_installer\MotorDICOM-Setup-<version>.exe  (ver build.bat)
 ;
 ;  Estructura esperada junto a este .iss antes de compilar:
 ;    ..\dist\MotorDICOM\        (salida onedir de PyInstaller)
@@ -13,7 +13,10 @@
 ; =============================================================================
 
 #define AppName "MotorDICOM"
-#define AppVersion "1.0.0"
+; build.bat la pasa con /DAppVersion=x.y.z; si se compila a mano queda 1.0.0
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define Publisher "Tecnoimagen SA"
 
 [Setup]
@@ -23,7 +26,7 @@ AppPublisher={#Publisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\dist_installer
-OutputBaseFilename={#AppName}-Setup
+OutputBaseFilename={#AppName}-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible

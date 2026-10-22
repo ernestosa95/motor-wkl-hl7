@@ -21,3 +21,6 @@ frontend-motor/dist/
 .env
 # Credenciales / scripts locales
 usuario.txt
+
+# Build
+build.log

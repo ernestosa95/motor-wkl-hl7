@@ -18,6 +18,9 @@ jinja2
 pynetdicom
 pydicom
 
+# --- Configuración ---
+python-dotenv             # main.py lee el .env del instalador; sin esto no conecta a la base
+
 # --- Autenticación ---
 PyJWT
 passlib[bcrypt]
