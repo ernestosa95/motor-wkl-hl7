@@ -44,13 +44,28 @@ def escapar(valor) -> str:
 
 
 def _set_campo(segmentos, disponibles, campo, valor):
+    """Escribe 'SEG-N' (campo completo) o 'SEG-N.M' (componente M del campo N).
+
+    El componente se aplica sobre lo que el campo ya tenga, asi se puede agregar
+    p. ej. la autoridad asignadora (PID-3.4) sin perder el ID mapeado en PID-3.
+    """
     try:
-        seg, idx = campo.split("-")
+        ref, _, comp = campo.partition(".")
+        seg, idx = ref.split("-")
         idx = int(idx)
+        comp = int(comp) if comp else 0
     except (ValueError, AttributeError):
         return
-    if seg in disponibles:
-        segmentos[seg][idx] = escapar(valor)
+    if seg not in disponibles:
+        return
+    valor = escapar(valor)
+    if not comp:
+        segmentos[seg][idx] = valor
+        return
+    partes = segmentos[seg].get(idx, "").split("^")
+    partes += [""] * (comp - len(partes))
+    partes[comp - 1] = valor
+    segmentos[seg][idx] = "^".join(partes)
 
 
 def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str) -> str:
@@ -82,7 +97,9 @@ def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, ti
             _set_campo(segmentos, disponibles, campo, valor)
 
     # 2) Valores fijos definidos por el usuario (sobrescriben).
-    for campo, valor in (valores_fijos or {}).items():
+    # Primero los campos completos y luego los componentes ("PID-3.4"), para que
+    # estos ultimos se apliquen sobre el valor final del campo.
+    for campo, valor in sorted((valores_fijos or {}).items(), key=lambda kv: "." in kv[0]):
         if valor is not None and str(valor) != "":
             _set_campo(segmentos, disponibles, campo, str(valor))
 
