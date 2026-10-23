@@ -156,6 +156,27 @@ def reprocesar_orden(correlation_id: str, tipo: Optional[str] = None,
     return {"ok": True, "reprocesados": [t.upper() for t in reencolados]}
 
 
+@app.post("/api/v1/trazabilidad/{correlation_id}/reenviar")
+def reenviar_orden(correlation_id: str, tipo: Optional[str] = None,
+                   db: Session = Depends(get_db),
+                   _user: Usuario = Depends(get_current_user)):
+    """Reenvia ADT, ORM o ambos (tipo vacio) aunque ya hayan sido aceptados."""
+    r = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id
+    ).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    if tipo is not None and tipo.lower() not in ("adt", "orm"):
+        raise HTTPException(status_code=400, detail="Tipo de mensaje invalido (adt | orm)")
+    if not r.payload_dicom_raw:
+        raise HTTPException(status_code=400, detail="No se pudo reenviar (sin payload original)")
+    reenviados = auditoria.reenviar(correlation_id, tipo)
+    if not reenviados:
+        raise HTTPException(status_code=409,
+                            detail="No hay mensajes para reenviar: se estan enviando o reintentando ahora")
+    return {"ok": True, "reenviados": [t.upper() for t in reenviados]}
+
+
 @app.get("/api/v1/health/channels")
 def estado_canales(db: Session = Depends(get_db), _user: Usuario = Depends(get_current_user)):
     completados = db.query(RegistroTrazabilidad).filter(

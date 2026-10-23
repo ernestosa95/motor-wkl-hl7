@@ -1,4 +1,5 @@
 import uuid
+import datetime
 from sqlalchemy.orm.attributes import flag_modified
 
 from core.database import SessionLocal
@@ -146,13 +147,14 @@ def resumen_envios(payload_hl7) -> dict:
 
 
 def actualizar_envio(correlation_id, tipo: str, envio: dict = None, mensaje: str = None,
-                     preservar_intentos: bool = True):
+                     borrar_mensaje: bool = False):
     """Actualiza UN mensaje (adt|orm) de la orden sin pisar al otro.
 
     Bloquea la fila (SELECT ... FOR UPDATE): ADT y ORM se envian en tareas
     paralelas y cada una modifica el mismo JSON. Recalcula el estado de la orden,
     el contador de reintentos y el detalle de error a partir de ambos mensajes.
     `envio` se mezcla con el registro actual del mensaje; `mensaje` es el HL7 generado.
+    `borrar_mensaje` descarta el HL7 guardado (el siguiente intento lo regenera con un MSH-10 nuevo).
     """
     db = SessionLocal()
     try:
@@ -163,11 +165,14 @@ def actualizar_envio(correlation_id, tipo: str, envio: dict = None, mensaje: str
             return None
         payload = dict(registro.payload_hl7 or {})
         envios = dict(payload.get("envios") or {})
+        if borrar_mensaje:
+            payload.pop(tipo, None)
         if mensaje is not None:
             payload[tipo] = mensaje
         if envio is not None:
             actual = dict(envios.get(tipo) or {})
             actual.update(envio)
+            actual["actualizado"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             envios[tipo] = actual
         payload["envios"] = envios
         registro.payload_hl7 = payload
@@ -197,6 +202,69 @@ def actualizar_envio(correlation_id, tipo: str, envio: dict = None, mensaje: str
         raise
     finally:
         db.close()
+
+
+MINUTOS_ATASCADO = 10  # un envio "pendiente" sin actividad por mas tiempo se considera perdido
+
+
+def _en_curso(envio: dict) -> bool:
+    """True si el mensaje se esta enviando o reintentando ahora (hay una tarea viva)."""
+    if not envio or envio.get("ok") or envio.get("estado") != "PENDIENTE":
+        return False
+    try:
+        ultima = datetime.datetime.strptime(envio.get("actualizado", ""), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return True  # sin marca de tiempo (registro anterior): no se asume atascado
+    return (datetime.datetime.now() - ultima) < datetime.timedelta(minutes=MINUTOS_ATASCADO)
+
+
+def reenviar(correlation_id: str, tipo: str = None) -> list:
+    """Reenvia ADT y/o ORM de una orden aunque ya hayan sido aceptados.
+
+    A diferencia de reprocesar (solo mensajes en ERROR_PERMANENTE), sirve para
+    retransmitir a proposito, p. ej. tras corregir la configuracion o el destino.
+    Se regenera con la configuracion vigente y un MSH-10 NUEVO (es una transmision
+    nueva, no un reintento, asi que no debe tomarse por duplicado). Se conserva el
+    registro de la aceptacion anterior en envios[tipo].anterior. Un mensaje que
+    esta enviandose o reintentando se omite (duplicaria el envio), salvo que lleve
+    mas de MINUTOS_ATASCADO sin actividad (tarea perdida, p. ej. por un reinicio).
+    Devuelve la lista de tipos re-encolados.
+    """
+    from core.broker import tarea_enviar_mensaje  # evita el import circular
+
+    tipos = [tipo.lower()] if tipo else list(TIPOS_MENSAJE)
+    if any(t not in TIPOS_MENSAJE for t in tipos):
+        return []
+
+    db = SessionLocal()
+    try:
+        registro = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).first()
+        if registro is None or not registro.payload_dicom_raw:
+            return []
+        payload = registro.payload_dicom_raw
+        envios = (registro.payload_hl7 or {}).get("envios") or {}
+        cid = registro.correlation_id
+        elegibles = [t for t in tipos if not _en_curso(envios.get(t))]
+    except Exception as e:
+        db.rollback()
+        print(f"[!] Error al preparar reenvio: {e}")
+        return []
+    finally:
+        db.close()
+
+    for t in elegibles:
+        e = envios.get(t) or {}
+        anterior = ({k: e.get(k) for k in ("destino", "cuando", "ack")} if e.get("ok") else e.get("anterior"))
+        actualizar_envio(cid, t, {
+            "ok": False, "estado": "PENDIENTE", "ultimo_error": None,
+            "reenvios": int(e.get("reenvios", 0)) + 1, "anterior": anterior,
+        }, borrar_mensaje=True)
+        print(f"[*] Auditoría: reenviando {correlation_id} ({t.upper()})")
+    for t in elegibles:
+        tarea_enviar_mensaje(cid, payload, t)
+    return elegibles
 
 
 def reprocesar(correlation_id: str, tipo: str = None) -> list:

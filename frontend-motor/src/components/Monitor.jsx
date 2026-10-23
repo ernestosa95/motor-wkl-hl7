@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { FileCode2, RotateCcw, History, Search } from 'lucide-react';
+import { FileCode2, RotateCcw, History, Search, Send } from 'lucide-react';
 import { apiFetch } from './Login';
 import HL7Viewer from './HL7Viewer';
 import AuditoriaModal from './AuditoriaModal';
@@ -115,6 +115,28 @@ export default function Monitor() {
     }
   };
 
+  // Reenvía ADT y ORM aunque ya estén aceptados (pide confirmación en ese caso).
+  const reenviar = async (orden) => {
+    const yaAceptado = Object.values(orden.mensajes || {}).includes('ENVIADO');
+    if (yaAceptado && !window.confirm(
+      `La orden ${orden.accession} ya tiene mensajes aceptados por el destino.\n\n` +
+      'Reenviar manda mensajes nuevos (con otro MSH-10) y puede duplicar o modificar datos en el RIS.\n\n¿Reenviar de todos modos?'
+    )) return;
+    setReprocesando((s) => ({ ...s, [orden.id]: true }));
+    try {
+      const res = await apiFetch(`/api/v1/trazabilidad/${orden.id}/reenviar`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        window.alert(data.detail || 'No se pudo reenviar la orden.');
+      }
+      await fetchTrazabilidad();
+    } catch (e) {
+      console.error('Error al reenviar', e);
+    } finally {
+      setReprocesando((s) => ({ ...s, [orden.id]: false }));
+    }
+  };
+
   // Aplicación de filtros (case-insensitive, sobre los datos ya cargados)
   const filtradas = useMemo(() => {
     const inc = (v, f) => (v || '').toString().toLowerCase().includes(f.toLowerCase());
@@ -212,6 +234,14 @@ export default function Monitor() {
                             {reprocesando[o.id] ? 'Reintentando…' : 'Reprocesar'}
                           </button>
                         )}
+                        <button
+                          onClick={() => reenviar(o)}
+                          disabled={!!reprocesando[o.id]}
+                          title="Volver a enviar el ADT y el ORM, aunque ya estén aceptados"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition-colors"
+                        >
+                          <Send size={14} /> Reenviar
+                        </button>
                         <button
                           onClick={() => setVerAuditoria(o)}
                           title="Ver auditoría de la orden"

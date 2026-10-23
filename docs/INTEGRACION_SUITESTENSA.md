@@ -324,7 +324,14 @@ Cada mensaje tiene su **propia tarea, sus propios reintentos y su propio estado*
   Con reintento automático pendiente o mensaje ya aceptado responde 409.
 - **Decisión vigente:** ambos mensajes salen sin esperarse (el ADT se encola primero). Si el RIS exigiera el paciente
   antes que la orden, un ORM tras un ADT fallido será rechazado; alternativa: retener el ORM hasta que el ADT sea aceptado.
-- Interfaz: el Monitor muestra por orden `ADT ✓ / ORM ✕`; la auditoría detalla destino, hora, error e intentos de cada mensaje.
+- **Reenviar** (cualquier orden, aunque esté `COMPLETADO`): botón en cada fila del Monitor (ambos mensajes) y en la auditoría (por mensaje o la orden
+  completa). Pide confirmación si el destino ya aceptó el mensaje. Regenera con la configuración vigente y un **`MSH-10` nuevo** (es una transmisión
+  nueva, no un reintento) y guarda la aceptación anterior en `envios.<tipo>.anterior` y el nº de reenvíos en `reenvios`. API:
+  `POST /api/v1/trazabilidad/{id}/reenviar[?tipo=adt|orm]`. Un mensaje que se está enviando o reintentando se omite (409); se considera atascado
+  (y se puede reenviar) si lleva más de 10 minutos sin actividad (`MINUTOS_ATASCADO`).
+  **Cuidado:** reenviar un ADT/ORM ya aceptado puede duplicar o modificar datos en el RIS; el comportamiento del RIS ante un ORM repetido (mismo `ORC-2`) no está verificado.
+- Interfaz: el Monitor muestra por orden `ADT ✓ / ORM ✕`. La **auditoría** es una ventana ancha de dos columnas que cabe en una sola pantalla
+  (estado, estado por mensaje y error a la izquierda; ADT y ORM con un segmento por línea a la derecha); se refresca sola mientras haya un mensaje en curso.
 
 ---
 
@@ -464,6 +471,7 @@ Decisión pendiente: separar el texto por comas (un código por estudio; depende
 | 13 | `IdEquipment and BusinessUnit are null` | Se había supuesto `PV1-3`; la especificación usa `OBR-21` y `OBR-18` | Equipo y unidad de negocio por modalidad (10.2) |
 | 14 | `EquipmentMandatory ... IdEquipment is null` | `OBR-21` sin cargar | Valor fijo `OBR-21` = `{codigo_equipo}` y `ExternalCode` del equipo = ese código |
 | 15 | `Configuration error in DB: LsBusinessUnit...` | Faltaban las relaciones de la unidad de negocio en el RIS | Configuración del RIS (8.2) |
+| 17 | La ventana de auditoría quedaba recortada y "muy abajo" en el scroll | La capa fija estaba anclada a un contenedor del Monitor y no a la pantalla | Se dibuja en `<body>` (portal) y se rediseñó en dos columnas |
 | 16 | Apellido `CASTAÃ'O` en el RIS | Mirth/RIS leen como Latin-1 los bytes UTF-8 (el motor envía UTF-8 con `MSH-18`) | **Pendiente**: codificación UTF-8 en los conectores de Mirth (sección 12) |
 
 ---
