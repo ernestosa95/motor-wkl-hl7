@@ -89,7 +89,7 @@ CATALOGO_HL7 = [
     # --- OBR ---
     {"campo": "OBR-2",  "segmento": "OBR", "descripcion": "Nº de orden (placer)"},
     {"campo": "OBR-3",  "segmento": "OBR", "descripcion": "Nº de orden (filler / accession)"},
-    {"campo": "OBR-4",  "segmento": "OBR", "descripcion": "Descripción del procedimiento"},
+    {"campo": "OBR-4",  "segmento": "OBR", "descripcion": "Procedimiento (ej. {codigo_estudio}^{descripcion_estudio})"},
     {"campo": "OBR-4.1", "segmento": "OBR", "descripcion": "Procedimiento: código"},
     {"campo": "OBR-4.3", "segmento": "OBR", "descripcion": "Procedimiento: sistema de codificación"},
     {"campo": "OBR-5",  "segmento": "OBR", "descripcion": "Prioridad"},

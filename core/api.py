@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
 from core.auth import autenticar, crear_token, get_current_user, get_usuario_token, get_db, hash_password
-from core import config_repo, mapeo_repo, auditoria
+from core import config_repo, mapeo_repo, auditoria, equivalencias_repo
 from core.conectividad import test_dicom_echo, test_mllp
 
 app = FastAPI(title="Motor HL7 API", version="1.6")
@@ -17,7 +17,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -210,3 +210,42 @@ def guardar_mapeos(tipo: str, body: MapeosIn, _user: Usuario = Depends(get_curre
     if tipo not in ("ADT", "ORM"):
         raise HTTPException(status_code=404, detail="Tipo de mensaje inválido")
     return mapeo_repo.reemplazar(tipo, body.mapeos, body.valores_fijos)
+
+
+# ---------- Equivalencias de estudio (texto del worklist -> codigo del destino) ----------
+
+class EquivalenciaIn(BaseModel):
+    descripcion_origen: str
+    codigo_destino: str
+    descripcion_destino: str = ""
+
+
+class ImportarIn(BaseModel):
+    csv: str
+
+
+@app.get("/api/v1/equivalencias")
+def listar_equivalencias(_user: Usuario = Depends(get_current_user)):
+    return {"equivalencias": equivalencias_repo.listar(),
+            "pendientes": equivalencias_repo.pendientes()}
+
+
+@app.put("/api/v1/equivalencias")
+def guardar_equivalencia(body: EquivalenciaIn, _user: Usuario = Depends(get_current_user)):
+    try:
+        return equivalencias_repo.upsert(body.descripcion_origen, body.codigo_destino,
+                                         body.descripcion_destino)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/v1/equivalencias/{id_}")
+def eliminar_equivalencia(id_: str, _user: Usuario = Depends(get_current_user)):
+    if not equivalencias_repo.eliminar(id_):
+        raise HTTPException(status_code=404, detail="Equivalencia no encontrada")
+    return {"ok": True}
+
+
+@app.post("/api/v1/equivalencias/importar")
+def importar_equivalencias(body: ImportarIn, _user: Usuario = Depends(get_current_user)):
+    return equivalencias_repo.importar_csv(body.csv)

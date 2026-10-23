@@ -4,6 +4,7 @@ import datetime
 
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
+from core.serializador_hl7 import EstudioSinCodigo
 from core.auditoria import actualizar_estado, guardar_hl7, obtener_hl7, registrar_fallo
 from core.emisor_mllp import enviar_mensaje_mllp, control_id, ErrorEmision
 from core.models import EstadoMensaje
@@ -48,31 +49,39 @@ def _destino(clave):
     raise ErrorEmision(f"El canal '{clave}' no tiene host/puerto configurado.")
 
 
-def _obtener_o_transformar(correlation_id, payload_dicom) -> dict:
+def _obtener_o_transformar(correlation_id, payload_dicom):
     """Genera los HL7 pendientes con la configuracion de mapeo VIGENTE.
 
     En cada intento (automatico o 'Reprocesar') se regeneran ADT/ORM que aun no
-    fueron aceptados, asi un cambio de mapeo o de valores fijos se aplica al
-    reenviar. Se conserva el MSH-10 original, para que el destino pueda detectar
-    duplicados. Lo ya aceptado (envios[tipo].ok) no se toca ni se reenvia.
+    fueron aceptados, asi un cambio de mapeo, de valores fijos o de equivalencias
+    de estudio se aplica al reenviar. Se conserva el MSH-10 original, para que el
+    destino pueda detectar duplicados. Lo ya aceptado (envios[tipo].ok) no se toca.
+
+    Devuelve (mensajes, errores). Un estudio sin equivalencia de codigo solo
+    bloquea ese mensaje (ej. el ORM): el otro se envia igual.
     """
     mensajes = obtener_hl7(correlation_id) or {}
     envios = mensajes.setdefault("envios", {})
     primera_vez = not (mensajes.get("adt") or mensajes.get("orm"))
+    errores = {}
 
     for tipo in ("adt", "orm"):
         if envios.get(tipo, {}).get("ok") and mensajes.get(tipo):
             continue
         previo = mensajes.get(tipo)
-        mensajes[tipo] = procesar_transformacion(
-            payload_dicom, tipo.upper(),
-            msg_id=(control_id(previo) or None) if previo else None,
-        )
+        try:
+            mensajes[tipo] = procesar_transformacion(
+                payload_dicom, tipo.upper(),
+                msg_id=(control_id(previo) or None) if previo else None,
+            )
+        except EstudioSinCodigo as e:
+            mensajes.pop(tipo, None)
+            errores[tipo.upper()] = str(e)
 
     guardar_hl7(correlation_id, mensajes)
-    if primera_vez:
+    if primera_vez and (mensajes.get("adt") or mensajes.get("orm")):
         actualizar_estado(correlation_id, EstadoMensaje.TRANSFORMADO)
-    return mensajes
+    return mensajes, errores
 
 
 def _emitir(correlation_id, mensajes, tipo, clave_canal, etiqueta):
@@ -105,7 +114,7 @@ def tarea_procesar_orden(correlation_id, payload_dicom, task=None):
     quedan = task.retries if task is not None else 0
 
     try:
-        mensajes = _obtener_o_transformar(correlation_id, payload_dicom)
+        mensajes, errores_transf = _obtener_o_transformar(correlation_id, payload_dicom)
     except Exception as e:
         # Fallo de transformacion (mapeo mal, payload invalido): no es de red,
         # reintentar no lo arregla.
@@ -119,6 +128,9 @@ def tarea_procesar_orden(correlation_id, payload_dicom, task=None):
     for tipo, clave_canal, etiqueta in DESTINOS:
         if mensajes["envios"].get(tipo, {}).get("ok"):
             continue  # ya aceptado en un intento anterior: no se reenvia
+        if etiqueta in errores_transf:
+            errores[etiqueta] = errores_transf[etiqueta]  # sin codigo de estudio: no se emite
+            continue
         error = _emitir(correlation_id, mensajes, tipo, clave_canal, etiqueta)
         if error:
             errores[etiqueta] = error

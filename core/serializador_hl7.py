@@ -47,7 +47,12 @@ def escapar(valor) -> str:
 
 # {00100020} -> valor del tag DICOM; {00100010:apellido} / {00100010:nombres} -> parte del nombre.
 # {ahora} -> fecha/hora del mensaje (la misma de MSH-7).
-_PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|(ahora))\}")
+# {codigo_estudio} / {descripcion_estudio} -> equivalencia del estudio en el destino.
+_PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|([a-z_]+))\}")
+
+
+class EstudioSinCodigo(Exception):
+    """El estudio del worklist no tiene equivalencia cargada en el destino."""
 
 
 def _valor_derivado(payload: dict, tag: str, parte) -> str:
@@ -64,11 +69,24 @@ def _valor_derivado(payload: dict, tag: str, parte) -> str:
     return apellido if parte == "apellido" else nombres
 
 
-def _renderizar_fijo(valor: str, payload: dict, ahora: str = "") -> str:
+def _marcador(nombre: str, payload: dict, ahora: str, contexto: dict) -> str:
+    if nombre == "ahora":
+        return ahora
+    if nombre in ("codigo_estudio", "descripcion_estudio"):
+        if nombre not in contexto:
+            raise EstudioSinCodigo(
+                "Estudio sin codigo de equivalencia: %r. Cargalo en Estudios y reprocesa."
+                % (payload.get("00321060", ""),))
+        return escapar(contexto[nombre])
+    raise ValueError("Marcador desconocido: {%s}" % nombre)
+
+
+def _renderizar_fijo(valor: str, payload: dict, ahora: str = "", contexto: dict = None) -> str:
     """Un valor fijo es HL7 literal (^ ~ & se respetan tal cual). Solo los datos
     DICOM insertados con {tag} se escapan; se quitan los saltos de linea."""
     texto = _PLANTILLA.sub(
-        lambda m: ahora if m.group(3) else escapar(_valor_derivado(payload, m.group(1), m.group(2))),
+        lambda m: _marcador(m.group(3), payload, ahora, contexto or {}) if m.group(3)
+        else escapar(_valor_derivado(payload, m.group(1), m.group(2))),
         valor)
     return texto.replace("\r", " ").replace("\n", " ")
 
@@ -101,7 +119,7 @@ def _set_campo(segmentos, disponibles, campo, valor, crudo=False):
 
 
 def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str,
-                      msg_id: str = None) -> str:
+                      msg_id: str = None, contexto: dict = None) -> str:
     tipo = tipo.upper()
     if tipo not in CONFIG:
         raise ValueError(f"Tipo de mensaje no soportado: {tipo}")
@@ -135,7 +153,7 @@ def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, ti
     for campo, valor in sorted((valores_fijos or {}).items(), key=lambda kv: "." in kv[0]):
         if valor is not None and str(valor) != "":
             _set_campo(segmentos, disponibles, campo,
-                       _renderizar_fijo(str(valor), payload_dicom, timestamp), crudo=True)
+                       _renderizar_fijo(str(valor), payload_dicom, timestamp, contexto), crudo=True)
 
     # Serialización.
     lineas = []

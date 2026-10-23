@@ -88,3 +88,14 @@ class ValorFijo(Base):
     __table_args__ = (
         UniqueConstraint("tipo_mensaje", "hl7_field", name="uq_valorfijo_tipo_campo"),
     )
+
+class EquivalenciaEstudio(Base):
+    """Equivalencia entre el texto del estudio en el worklist y su codigo en el destino."""
+    __tablename__ = "equivalencias_estudio"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Descripcion de origen normalizada (sin tildes, minusculas, espacios colapsados).
+    clave = Column(String(256), unique=True, nullable=False, index=True)
+    descripcion_origen = Column(String(256), nullable=False)
+    codigo_destino = Column(String(64), nullable=False)
+    descripcion_destino = Column(String(256), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
