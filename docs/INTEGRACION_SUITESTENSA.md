@@ -15,9 +15,9 @@
 | Mensaje | Estado |
 |---|---|
 | **ADT^A04** (alta/admisión del paciente) | ✅ Funciona de punta a punta: el RIS crea el paciente (`Resultado: Yes`). |
-| **ORM^O01** (orden del estudio) | 🔶 Casi: tras los ajustes, al 17:42 el RIS solo devolvía `I.REST C02 - Exam Code 1 not encoded`. Falta que el **código de examen** enviado exista en el RIS: 314 de los 522 códigos chocan con exámenes preexistentes (sección 11.0). |
+| **ORM^O01** (orden del estudio) | ✅ **Funciona** (2026-10-23): las órdenes aparecen en la pantalla *Ejecución* de SUITESTENSA con su estudio, hora y equipo (p. ej. `TC de abdomen y pelvis` → `TOMOGRAFIA`; `radiografía simple de mano` → `RX FIJO TECNO`). Hizo falta corregir 314 códigos de examen en colisión (11.0), mapear el equipo y la unidad de negocio (10.2) y configurar en el RIS las relaciones de la unidad de negocio (8.2). |
 
-Lo pendiente principal es la **codificación del examen** (sección 11). Lo demás está resuelto o es mejora.
+Lo pendiente principal ya no es el flujo básico sino la **robustez**: codificación de caracteres (sección 12), órdenes con varios estudios (11.4 y 18), identidad del paciente (`PK`) y los flujos RIS → HIS (sección 16).
 
 Cadena completa:
 
@@ -281,6 +281,24 @@ El RIS responde por HTTP (`HTTP/1.1 531 ...`), que Mirth devuelve como `ACK AE`.
 | `Exam Code <texto> not encoded` | `OBR-4` componente 1 | El texto se enviaba como código → resuelto con equivalencias |
 | `Exam Code 1 not encoded` | `OBR-4` componente 1 | ✅ Causa: colisión de códigos (sección 11.0) |
 | `Mandatory data ... IdEquipment and BusinessUnit are null` | ✅ `OBR-21` (equipo) y `OBR-18` (unidad de negocio), según la especificación | Resuelto con equipo por modalidad (10.2) |
+| `EquipmentMandatory is true but IdEquipment is null` | `OBR-21` **vacío** en el mensaje (no estaba cargado el valor fijo) | Cargar `OBR-21` = `{codigo_equipo}`; el código debe coincidir con el `ExternalCode` del equipo en el RIS |
+| `Configuration error in DB: LsBusinessUnitEquipment - LsBusinessUnitModality - LsBusinessUnitProvenance ... is empty` | Configuración del **RIS** (no del mensaje) | Ver 8.2 |
+
+### 8.2 Configuración necesaria en el RIS (la hace su administrador)
+
+Para que una orden se acepte, el RIS necesita estos datos de maestros; sin ellos rechaza el ORM aunque el mensaje sea correcto:
+
+| Dato | Cómo lo reconoce el RIS | Observaciones |
+|---|---|---|
+| **Examen** | `ExternalCode` del examen = código enviado en `OBR-4.1` | Un código que exista pero con `ExternalCode` distinto (p. ej. `0`) da `Exam Code ... not encoded` |
+| **Equipo** | `ExternalCode` del equipo = `OBR-21` | De 13 equipos, solo 4 tenían `ExternalCode`: `RX001`, `RMN001`, `ECOXERT`, `ECOOOOO2`. Hay que asignarlo a los que se vayan a usar |
+| **Unidad de negocio** | Código enviado en `OBR-18` (p. ej. `CD1`) | |
+| **Procedencia** | Código enviado en `ORC-17.1` (p. ej. `INT`) | Se creó una procedencia genérica de integración |
+| **Relaciones de la unidad de negocio** | Tablas `LsBusinessUnitEquipment`, `LsBusinessUnitModality`, `LsBusinessUnitProvenance` | La unidad debe estar vinculada a **cada equipo, modalidad y procedencia** que se use; si falta alguna: `Configuration error in DB ... is empty` |
+
+Por cada modalidad nueva que se integre hay que repetir: equipo con `ExternalCode`, vínculo con la unidad de negocio y con la modalidad,
+y cargar el código en *Estudios → Equipo por modalidad*. Equipos vistos en el RIS: `RX FIJO TECNO`, `RX RODANTE TECNO`, `CR TECNO`,
+`SERIOGRAFO DE TECNO` (DX\RF), `TOMOGRAFIA`, `MAMOGRAFO`, `MR`, `ECO MINDRAY`, `ECO2`, `US-TEST`, `Telecomandato XYZ`; **no hay equipo de densitometría ni de medicina nuclear**.
 
 ---
 
@@ -442,6 +460,11 @@ Decisión pendiente: separar el texto por comas (un código por estudio; depende
 | 9 | Reprocesar reenviaba el mensaje viejo | Se reutilizaba el HL7 guardado | Cada intento regenera con la configuración vigente |
 | 10 | Una orden con ORM fallido quedaba toda en error | Una sola tarea/estado/contador para ADT y ORM | Desacople (sección 9) |
 | 11 | Estudio sin código creaba ORM inválidos | — | El ORM se retiene y el ADT sale igual |
+| 12 | `Exam Code 1 not encoded` | 314 de los 522 códigos del motor chocaban con exámenes preexistentes del RIS (`ExternalCode = 0`) | Recodificar esos 314 (`523–836`), dar de alta e importar (11.0) |
+| 13 | `IdEquipment and BusinessUnit are null` | Se había supuesto `PV1-3`; la especificación usa `OBR-21` y `OBR-18` | Equipo y unidad de negocio por modalidad (10.2) |
+| 14 | `EquipmentMandatory ... IdEquipment is null` | `OBR-21` sin cargar | Valor fijo `OBR-21` = `{codigo_equipo}` y `ExternalCode` del equipo = ese código |
+| 15 | `Configuration error in DB: LsBusinessUnit...` | Faltaban las relaciones de la unidad de negocio en el RIS | Configuración del RIS (8.2) |
+| 16 | Apellido `CASTAÃ'O` en el RIS | Mirth/RIS leen como Latin-1 los bytes UTF-8 (el motor envía UTF-8 con `MSH-18`) | **Pendiente**: codificación UTF-8 en los conectores de Mirth (sección 12) |
 
 ---
 
