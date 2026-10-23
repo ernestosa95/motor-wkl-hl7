@@ -1,1 +1,4 @@
+# Todo lo del motor mas lo necesario para las pruebas (incluidas las de la API)
+-r requirements.txt
 pytest
+httpx

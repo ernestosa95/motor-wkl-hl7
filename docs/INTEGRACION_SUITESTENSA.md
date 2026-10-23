@@ -666,3 +666,24 @@ En este entorno el motor entrega a Mirth (`172.31.3.150:5556`); los flujos RIS �
 | `tools/consultar_worklist.py` | Inspección del worklist de origen |
 | `tools/clasificar_modalidad_ris.py` | Asignación de modalidad del RIS a cada estudio (usa `core/modalidad_ris.py`) |
 | `build.bat`, `installer/` | Construcción del instalador |
+
+---
+
+## Exportar / importar la configuración (replicar en otros hospitales)
+
+Menú **Configuración** de la interfaz. Evita recargar a mano las pestañas ADT/ORM, los valores fijos y los equipos en cada hospital.
+
+**Exportar** genera `configuracion_<hospital>_<AAAAMMDD>.json` (formato `motordicom-configuracion`, versión 1) con las secciones elegidas:
+
+| Sección | Contenido | Por defecto | Al importar |
+|---|---|---|---|
+| `mensajes` | mapeos y valores fijos ADT/ORM | sí | **reemplaza** los tipos presentes en el archivo |
+| `equipos` | equipo por modalidad / unidad de negocio | sí | agrega o actualiza (no borra) |
+| `canales` | destinos MLLP (IP, puerto) | no (propio de cada hospital) | agrega o actualiza |
+| `equivalencias` | catálogo de estudios (códigos del RIS) | no (propio de cada hospital) | agrega o actualiza |
+
+**Importar**: se elige el archivo y primero se muestra una **vista previa** (nuevos / modificados / quitados / sin cambios, con detalle) sin escribir nada. Los errores de validación bloquean la aplicación. Se destacan los valores que suelen diferir por hospital (`MSH-3/4/5/6/11`, `PV1-2/3`, `ORC-17`) para revisarlos antes de aplicar. Al aplicar se guarda un **respaldo automático** de toda la configuración previa en `<MOTORDICOM_DATA>\backups\configuracion_antes_de_importar_<fecha>.json`; ese mismo archivo se puede importar para revertir.
+
+**API** (requiere autenticación): `GET /api/v1/configuracion/exportar?secciones=&hospital=&comentario=` y `POST /api/v1/configuracion/importar` con `{configuracion, secciones, aplicar}` (`aplicar=false` = vista previa; errores → HTTP 400 con `detail.errores`).
+
+Código: `core/configuracion_repo.py`, `frontend-motor/src/components/Configuracion.jsx`, pruebas `tests/test_configuracion.py` y `tests/test_api_configuracion.py`.

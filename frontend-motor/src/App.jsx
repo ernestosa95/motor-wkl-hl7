@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Activity, Network, GitCompareArrows, ClipboardList, LogOut } from 'lucide-react';
+import { Activity, Network, GitCompareArrows, ClipboardList, Settings2, LogOut } from 'lucide-react';
 import Monitor from './components/Monitor';
 import Canales from './components/Canales';
 import Mapeos from './components/Mapeos';
 import Estudios from './components/Estudios';
+import Configuracion from './components/Configuracion';
 import Login from './components/Login';
 import CambiarPassword from './components/CambiarPassword';
 
@@ -16,6 +17,8 @@ const SECCIONES = [
     titulo: 'Mapeo DICOM → HL7', subtitulo: 'Definí a qué campos HL7 se envía cada tag DICOM.' },
   { id: 'estudios', label: 'Estudios', icon: ClipboardList,
     titulo: 'Codificación de estudios', subtitulo: 'Equivalencia entre el estudio del worklist y su código en el destino.' },
+  { id: 'configuracion', label: 'Configuración', icon: Settings2,
+    titulo: 'Configuración', subtitulo: 'Exportar e importar la configuración para replicarla en otro hospital o respaldarla.' },
 ];
 
 export default function App() {
@@ -134,6 +137,7 @@ export default function App() {
             {seccion === 'canales' && <Canales />}
             {seccion === 'mapeo' && <Mapeos />}
             {seccion === 'estudios' && <Estudios />}
+            {seccion === 'configuracion' && <Configuracion />}
           </div>
         </main>
       </div>

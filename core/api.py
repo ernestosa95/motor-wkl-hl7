@@ -43,6 +43,14 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     }
 
 
+class PacienteIn(BaseModel):
+    apellido: Optional[str] = None
+    nombres: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    sexo: Optional[str] = None
+    reenviar: bool = False
+
+
 class CambioPasswordIn(BaseModel):
     password_nueva: str
 
@@ -275,14 +283,6 @@ class EquivalenciaIn(BaseModel):
     codigo_destino: str
     descripcion_destino: str = ""
     modalidad_ris: Optional[str] = None
-
-
-class PacienteIn(BaseModel):
-    apellido: Optional[str] = None
-    nombres: Optional[str] = None
-    fecha_nacimiento: Optional[str] = None
-    sexo: Optional[str] = None
-    reenviar: bool = False
 
 
 class ImportarConfigIn(BaseModel):
