@@ -242,19 +242,21 @@ PV1|1|O|...
 | `PID-3` | `{00100020}^^^PK~{00100020}^DU^^CF` | Igual que el ADT |
 | `PID-5` | `{00100010:apellido}^^{00100010:nombres}^` | Igual que el ADT. **No copiar la plantilla de `PID-3` aquí** (error ya ocurrido, ver 10) |
 | `PV1-2` | `O` (por defecto) | Clase de paciente |
-| `PV1-3` | `INT` (valor usado en las pruebas) | Ubicación |
+| `PV1-3` | `INT` | **Ubicación de origen del paciente** (no es el equipo; ver sección 18) |
 | `ORC-1` | `SN` | Control de orden |
-| `ORC-2` | `{00080050}^HIS` | Nº de orden + autoridad |
-| `ORC-4` | `{00080050}^HIS` | `PlacerGroupNumber` + `PlacerGroupNumberIssuer` |
-| `ORC-7` | `1^^^{ahora}^^1` | Cantidad/tiempo (`Exam Date`, probable) |
+| `ORC-2` | `{00080050}^SISGH` | Nº de orden + entidad que lo genera (la especificación usa `SISGH`) |
+| `ORC-4` | `{00080050}^SISGH` | `PlacerGroupNumber` + `PlacerGroupNumberIssuer` (mismo valor que `ORC-2`) |
+| `ORC-7` | `1^^^{cita}^^1` | `ORC-7.4` = fecha/hora de la cita (`Exam Date`) |
 | `ORC-9` | `{ahora}` | Fecha/hora de la transacción (`Exam Date`, probable) |
 | `ORC-12` | `^SIN DERIVADOR` | Médico solicitante (copiado del ejemplo) |
 | `ORC-17` | `INT^integracion` | **Procedencia** (el componente 1 es el código) |
-| `OBR-2` | `{00080050}^HIS` | Nº de orden (placer) |
+| `OBR-2` | `{00080050}^SISGH` | Nº de orden (placer), igual a `ORC-2` |
 | `OBR-4` | `{codigo_estudio}^{descripcion_estudio}` | **Código de examen** |
-| `OBR-25` | `1^^^{ahora}^^1` | Cantidad/tiempo (copiado del ejemplo) |
+| `OBR-18` | `{unidad_negocio}` | **`BusinessUnit`**: centro de costo / unidad que realiza el estudio (sección 10.2) |
+| `OBR-21` | `{codigo_equipo}` | **`IdEquipment`**: recurso/equipo donde se realiza (sección 10.2) |
+| `OBR-27` | `1^^^{cita}^^1` | `OBR-27.4` = fecha/hora de la cita (según la especificación; el ejemplo del RIS la ponía en `OBR-25`) |
 
-Recomendado en la pestaña de **mapeos** del ORM: quitar los destinos `OBR-3`, `OBR-24`, `OBR-27` (el ejemplo del RIS los deja vacíos) y no usar `OBR-7`.
+Recomendado en la pestaña de **mapeos** del ORM: quitar el destino `OBR-3` (la especificación lo deja vacío) y `OBR-24`. `OBR-27` está mapeado por defecto con solo la fecha DICOM, pero el valor fijo de arriba lo **sobrescribe**. No usar `OBR-7` ni `OBR-25` (si quedaron cargados en un valor fijo, vaciarlos).
 `PV1-19` (nº de visita) se deja **vacío** por decisión (no es obligatorio).
 
 **Ejemplo del ORM de referencia del RIS** (datos ficticios, estructura real):
@@ -277,7 +279,8 @@ El RIS responde por HTTP (`HTTP/1.1 531 ...`), que Mirth devuelve como `ACK AE`.
 | `Exam Date NULL` | 🔶 `ORC-7` y/o `ORC-9` (no se resolvía con solo `OBR-7`/`OBR-25`) | Resuelto al cargar `ORC-7`/`ORC-9` (se deduce del último error) |
 | `Provenance NULL` → `Provenance Code 1 not encoded` | ✅ **`ORC-17` componente 1** (cambió al poner `1^INT`) | Resuelto con `ORC-17` = `INT^integracion` |
 | `Exam Code <texto> not encoded` | `OBR-4` componente 1 | El texto se enviaba como código → resuelto con equivalencias |
-| `Exam Code 1 not encoded` | `OBR-4` componente 1 | ❌ **Pendiente** (sección 11) |
+| `Exam Code 1 not encoded` | `OBR-4` componente 1 | ✅ Causa: colisión de códigos (sección 11.0) |
+| `Mandatory data ... IdEquipment and BusinessUnit are null` | ✅ `OBR-21` (equipo) y `OBR-18` (unidad de negocio), según la especificación | Resuelto con equipo por modalidad (10.2) |
 
 ---
 
@@ -347,8 +350,11 @@ modalidad**, configurable desde la pantalla *Estudios → Equipo por modalidad*.
   Valores por defecto: RADIOLOGIA `DX`, RADIOGRAFIA CONTRASTADA `DX`, TOMOGRAFIA `CT`, RESONANCIA MAGNETICA `MR`, MAMOGRAFIA `MG`,
   ECOGRAFIA `US`, DENSITOMETRIA OSEA `BMD`, MEDICINA NUCLEAR `NM`; descripción `EQUIPO GENERICO <código>`; unidad de negocio vacía.
   Editables y restaurables (*Restaurar por defecto*).
-- **Uso:** `PV1-3` = `{codigo_equipo}^^^^^^^{descripcion_equipo}` (estructura del ORM de referencia). 🔶 Qué campo HL7 alimenta `BusinessUnit` no se conoce
-  todavía: cuando se sepa se asigna con `{unidad_negocio}` (si se usa y la modalidad no la tiene configurada, el ORM se retiene).
+- **Uso (según la especificación del proveedor, sección 18):** `OBR-21` = `{codigo_equipo}` (recurso donde se realiza el estudio) y
+  `OBR-18` = `{unidad_negocio}` (centro de costo / unidad que lo realiza). **No** se usa `PV1-3`, que es la ubicación de origen del paciente.
+  Si se usa un marcador y la modalidad no tiene ese dato configurado, el ORM se retiene (`Sin equipo configurado ...`).
+  La descripción del equipo es solo informativa: `OBR-21` y `OBR-18` llevan únicamente el código.
+  **Los códigos de equipo y de unidad de negocio deben existir en el RIS** (los genéricos `DX`, `US`... hay que crearlos allí).
 - **CSV:** *Exportar pendientes* trae `modalidad_ris` (la sugerida) y `modalidad_dicom`; *Importar CSV* lee `modalidad_ris` **por nombre de columna**
   (si falta, se conserva la que ya tenía el estudio). Una modalidad fuera de las 8 del RIS se rechaza con el número de fila.
 - `Radiografía contrastada` usa `DX` por defecto (decisión pendiente de confirmar: el RIS podría tener un equipo de fluoroscopia).
@@ -482,6 +488,12 @@ esto elimina su trazabilidad.
 | **Alta** | Resolver las **colisiones de código** (314 estudios, sección 11.0): recodificar, dar de alta e importar |
 | **Alta** | Decidir el tratamiento de los **textos cortados y órdenes con varios estudios** (11.4) |
 | Alta | Verificar `MSH-18` / codificación UTF-8 con un paciente con tildes (sección 12) |
+| **Alta** | **Un procedimiento por mensaje ORM** (sección 18): las órdenes con varios estudios deben generar un ORM por estudio, con nº de orden único (`ORC-2`) y un `ORC-4` común |
+| **Alta** | Verificar que el `PatientID` del worklist es el **IDHC** de SISGH y no un DNI: el RIS espera `IDHC` como `PK`; usar el DNI como `PK` puede **duplicar pacientes** |
+| Media | Decidir `ORC-1`: `SN` (admisión directa, aparece en la lista del técnico) o `NW` + `ORC-5`=`SC` (procedimiento agendado con cita) |
+| Media | Sexo DICOM `O` → HL7 `U` (el RIS acepta `F`, `M`, `U`) |
+| Media | Flujos **RIS → HIS** no implementados: ORM de estado (`XO`/`CM`/`CA`) y ORU de resultados |
+| Baja | Confirmar `MSH-4` (`ARP03`): la especificación lista `PAMI1` / `MILSTEIN` |
 | Media | Abrir el **PR** de `build/script-windows` / `feat/adt-mirth` hacia `main` |
 | Media | Quitar `static\` del control de versiones (es salida de build; genera cambios y conflictos en cada compilación) |
 | Media | **Reprocesar en masa** los ORM con error (hoy es de a una orden) |
@@ -491,6 +503,65 @@ esto elimina su trazabilidad.
 | Baja | Importar el catálogo del RIS y elegir el código con un buscador / sugerencias por similitud |
 | Baja | `ORC-12` fijo en `SIN DERIVADOR`: usar el médico derivante del worklist si viene |
 | Baja | `PV1-19` (nº de visita) y códigos de servicio/equipo reales (`PV1-3`, `ORC-17`) si el RIS los exige |
+
+---
+
+## 18. Especificación del proveedor del RIS (`Relevamiento_integracion.xlsx`)
+
+Documento recibido el 2026-10-23 (hojas por segmento y mensaje). Resume lo que **exige el RIS** y cómo se refleja en el motor.
+Referencias a hojas entre corchetes. La especificación habla de un HIS llamado *GOMEDISYS/SISGH* y usa ejemplos de otra institución (`PAMI1`, `MILSTEIN`).
+
+### 18.1 Reglas generales
+- **Cada ORM contiene una sola orden (`ORC`) y un solo procedimiento (`OBR`)** [Order Management; PV1: "UN PROCEDIMIENTO POR MENSAJE"].
+  Una orden con varios estudios debe viajar como **varios ORM**. Hoy el motor envía un ORM por orden (sección 11.4).
+- Segmentos obligatorios del ORM: `MSH`, `PID`, `PV1`, `ORC`, `OBR`. Opcionales: `ZDS` (Study Instance UID) y `OBX`.
+- `MSH`: `MSH-3` = `SISGH` (prod) / `TEST_SISGH` (prueba); `MSH-5`/`MSH-6` = `SUITESTENSA`; `MSH-9` = `ADT^A04` / `ORM^O01`; `MSH-10` autonumérico único;
+  `MSH-11` = `P` (prod) / `T` (prueba); `MSH-12` = `2.5`; **`MSH-18` = `UTF-8`**.
+- `ACK`: `MSA-1` = `AA` (correcto), `AE` (mensaje no gestionado), `AR` (error de parseo o procesamiento); `MSA-2` = `MSH-10` del mensaje.
+- `ADT`: `A04` y `A08` son equivalentes para crear pacientes; `A08` también actualiza datos; `A40`/`A34` unifican pacientes. La **creación de pacientes también ocurre por mensajería ORM**.
+
+### 18.2 `PID`
+- `PID-3` (obligatorio, repetible): `IDHC^^^PK~NUMERO_DOCUMENTO^TIPO_DOC^^CF~NUMERO_AFILIADO`.
+  `PK` = **ID interno autoincremental de SISGH (IDHC)**; `CF` = documento (tipo en el componente 2: `DU` documento único, `DE` extranjero, `PA` pasaporte, `LC`, `LE`, `RN` recién nacido).
+- `PID-5`: `APELLIDO^DOBLE APELLIDO^NOMBRE1^NOMBRE2...` (coincide con lo implementado).
+- `PID-7` `AAAAMMDD`; `PID-8` `F`/`M`/`U`. `PID-11` domicilio, `PID-13` teléfono, `PID-18` (`NUMERO_DOCUMENTO^^^DU`) y `PID-19` (afiliado) son opcionales y hoy no se envían.
+
+### 18.3 `PV1`
+- `PV1-2` (clase de paciente) **obligatorio** en las órdenes: `O` ambulatorio, `I` internado, `E` urgencia/guardia.
+- **`PV1-3`: código de la ubicación de donde viene el paciente** (configurado en el HIS), con la descripción en `PV1-3-9`. **No es el equipo.**
+- `PV1-19` (nº de visita): "número de orden de trabajo", entero; llega vacío en el ADT y con valor en el ORM. En las pruebas no fue exigido.
+
+### 18.4 `ORC`
+| Campo | Qué pide el RIS |
+|---|---|
+| `ORC-1` / `ORC-5` | `NW` + `SC` (nueva orden con cita, HIS → RIS) o `SN` + vacío (admisión directa, aparece en la lista del técnico). También `XO`, `CM`, `CA` en el sentido RIS → HIS |
+| `ORC-2` | Nº de orden (**entero único por orden**) `^` entidad que lo genera (`<nº>^SISGH`). Obligatorio |
+| `ORC-3` | Vacío desde el HIS (lo completa el RIS al devolver) |
+| `ORC-4` | Placer group number: el mismo valor que `ORC-2` o una parte; `ORC-4-2` = `ORC-2-2`. Obligatorio |
+| `ORC-7` | `ORC-7.4` = fecha/hora de la cita (o de la creación de la orden si no tiene cita); `ORC-7.6` = prioridad. Ej.: `^^^20200427141200^^1` |
+| `ORC-9` | Momento en que se generó la orden |
+| `ORC-12` | Médico solicitante: `id^apellido^nombre` |
+| `ORC-17` | **Procedencia** (origen del paciente): `código^descripción`. Obligatorio |
+
+### 18.5 `OBR`
+| Campo | Qué pide el RIS |
+|---|---|
+| `OBR-2` | Igual que `ORC-2` (`<nº>^SISGH`) |
+| `OBR-3` | Vacío (igual que `ORC-3`) |
+| `OBR-4` | `código^descripción` del examen. **El código es el de la parametrización del RIS (p. ej. `RX001`), no el ID (GUID)** |
+| **`OBR-18`** | **Código de la unidad de negocio / centro de costo que realiza el examen** (`BusinessUnit`) |
+| **`OBR-21`** | **Código del recurso (sala, consultorio, equipo) donde se realiza** (`IdEquipment`) |
+| `OBR-27` | `1^^^AAAAMMDDhhmmss^^1`: fecha/hora de la cita, o de creación de la orden si no tiene cita. `OBR-27.6` = prioridad |
+| `OBR-13` / `OBR-31` | Información clínica / motivo del estudio (opcionales) |
+
+### 18.6 Canales de la especificación
+`ADT` y `ORM` HIS → RIS por TCP (puertos 2200 y 2201), `ORM` RIS → HIS (2202, cambios de estado) y `ORU` RIS → HIS (2203, resultados).
+En este entorno el motor entrega a Mirth (`172.31.3.150:5556`); los flujos RIS → HIS (estados y resultados) **no están implementados**.
+
+### 18.7 Correcciones que surgieron de esta especificación
+1. Equipo y unidad de negocio van en **`OBR-21` y `OBR-18`**, no en `PV1-3` (que era una suposición errónea basada en el ORM de ejemplo).
+2. La fecha/hora de la cita va en `ORC-7.4` y `OBR-27.4` (el ejemplo del RIS tenía el valor en `OBR-25`). Se agregó el marcador `{cita}` (fecha y hora programadas del worklist; si no hay fecha, usa la del mensaje).
+3. La entidad emisora del número de orden es `SISGH` (no `HIS`).
 
 ---
 

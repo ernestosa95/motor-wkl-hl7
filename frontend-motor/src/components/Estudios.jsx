@@ -315,7 +315,7 @@ function Equipos({ data, onCambio, setAviso }) {
           <p className="text-[11px] text-zinc-400 mt-0.5">
             Equipo genérico que se asigna según la modalidad del RIS del estudio. Úsalo en Mapeo → Valores fijos con
             <span className="font-mono"> {'{codigo_equipo}'}</span>, <span className="font-mono">{'{descripcion_equipo}'}</span> y
-            <span className="font-mono"> {'{unidad_negocio}'}</span> (ej. PV1-3: <span className="font-mono">{'{codigo_equipo}^^^^^^^{descripcion_equipo}'}</span>).
+            <span className="font-mono"> {'{unidad_negocio}'}</span> (según el RIS: <span className="font-mono">OBR-21</span> = <span className="font-mono">{'{codigo_equipo}'}</span> e <span className="font-mono">OBR-18</span> = <span className="font-mono">{'{unidad_negocio}'}</span>).
           </p>
         </div>
         <button onClick={restaurar}

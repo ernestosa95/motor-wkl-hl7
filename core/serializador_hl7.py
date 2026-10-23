@@ -46,7 +46,7 @@ def escapar(valor) -> str:
 
 
 # {00100020} -> valor del tag DICOM; {00100010:apellido} / {00100010:nombres} -> parte del nombre.
-# {ahora} -> fecha/hora del mensaje (la misma de MSH-7).
+# {ahora} -> fecha/hora del mensaje (la misma de MSH-7); {cita} -> fecha/hora de la cita del worklist.
 # {codigo_estudio} / {descripcion_estudio} -> equivalencia del estudio en el destino.
 _PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|([a-z_]+))\}")
 
@@ -81,9 +81,20 @@ def _valor_derivado(payload: dict, tag: str, parte) -> str:
     return apellido if parte == "apellido" else nombres
 
 
+def _fecha_hora_cita(payload: dict, ahora: str) -> str:
+    """Fecha/hora de la cita (AAAAMMDDhhmmss) del worklist; sin fecha usa la del mensaje."""
+    fecha = re.sub(r"\D", "", str(payload.get("00400002", "") or ""))[:8]
+    if len(fecha) != 8:
+        return ahora
+    hora = re.sub(r"\D", "", str(payload.get("00400003", "") or "").split(".")[0])[:6]
+    return fecha + hora.ljust(6, "0")
+
+
 def _marcador(nombre: str, payload: dict, ahora: str, contexto: dict) -> str:
     if nombre == "ahora":
         return ahora
+    if nombre == "cita":
+        return _fecha_hora_cita(payload, ahora)
     if nombre in _MARCADORES_ESTUDIO:
         if nombre not in contexto:
             raise EstudioSinCodigo(
