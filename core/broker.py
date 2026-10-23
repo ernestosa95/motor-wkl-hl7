@@ -5,7 +5,8 @@ import datetime
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
 from core.serializador_hl7 import DatoSinEquivalencia
-from core.auditoria import actualizar_envio, obtener_hl7
+from core.validacion_paciente import DatosPacienteInvalidos
+from core.auditoria import actualizar_envio, obtener_hl7, obtener_payload_dicom
 from core.emisor_mllp import enviar_mensaje_mllp, control_id, ErrorEmision
 from core import config_repo
 
@@ -77,6 +78,8 @@ def tarea_enviar_mensaje(correlation_id, payload_dicom, tipo, task=None):
     previo = ((obtener_hl7(correlation_id) or {}).get("envios") or {}).get(tipo) or {}
     if previo.get("ok"):
         return  # ya aceptado: no se reenvia
+    # Siempre los datos guardados hoy (una correccion manual puede ser posterior al encolado)
+    payload_dicom = obtener_payload_dicom(correlation_id) or payload_dicom
 
     error, reintentable = None, True
     try:
@@ -84,6 +87,8 @@ def tarea_enviar_mensaje(correlation_id, payload_dicom, tipo, task=None):
         actualizar_envio(correlation_id, tipo, {"estado": "PENDIENTE"}, mensaje=mensaje)
         host, puerto = _destino(clave_canal)
         ack = enviar_mensaje_mllp(mensaje, host=host, puerto=puerto)
+    except DatosPacienteInvalidos as e:
+        error, reintentable = str(e), False  # los datos no cambian al reintentar: error permanente
     except DatoSinEquivalencia as e:
         error = str(e)  # se resuelve en Estudios (equivalencia o equipo): los reintentos lo recogen
     except ErrorEmision as e:

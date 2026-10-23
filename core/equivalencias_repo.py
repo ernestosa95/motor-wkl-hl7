@@ -73,7 +73,7 @@ def listar() -> list:
 
 def _modalidad_valida(modalidad):
     """Normaliza una modalidad del RIS ('' / None = sin indicar). Lanza ValueError si no es valida."""
-    m = " ".join(str(modalidad or "").split()).upper()
+    m = normalizar(modalidad).upper()  # sin tildes ni espacios de mas: 'Tomografía' -> 'TOMOGRAFIA'
     if not m:
         return None
     if m not in MODALIDADES_RIS:

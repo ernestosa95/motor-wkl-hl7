@@ -24,3 +24,7 @@ usuario.txt
 
 # Build
 build.log
+
+# Pruebas
+tests/.datos/
+.pytest_cache/

@@ -4,6 +4,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from core.database import SessionLocal
 from core.models import RegistroTrazabilidad, EstadoMensaje
+from core.nombres import separar_nombre
+from core import validacion_paciente as vp
 
 
 def actualizar_estado(correlation_id: uuid.UUID, estado: EstadoMensaje):
@@ -199,6 +201,98 @@ def actualizar_envio(correlation_id, tipo: str, envio: dict = None, mensaje: str
     except Exception as e:
         db.rollback()
         print(f"[!] Error al actualizar envio {tipo}: {e}")
+        raise
+    finally:
+        db.close()
+
+
+def obtener_payload_dicom(correlation_id):
+    """Datos DICOM de la orden tal como estan guardados HOY (incluye correcciones manuales)."""
+    db = SessionLocal()
+    try:
+        r = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id).first()
+        return dict(r.payload_dicom_raw) if r and r.payload_dicom_raw else None
+    finally:
+        db.close()
+
+
+def datos_paciente(payload: dict) -> dict:
+    """Datos del paciente tal como se enviarian, y los motivos por los que no se podrian enviar."""
+    payload = payload or {}
+    apellido, nombres = separar_nombre(payload.get(vp.TAG_NOMBRE))
+    return {
+        "documento": str(payload.get(vp.TAG_ID, "") or ""),
+        "apellido": apellido,
+        "nombres": nombres,
+        "fecha_nacimiento": str(payload.get(vp.TAG_NACIMIENTO, "") or ""),
+        "sexo": str(payload.get(vp.TAG_SEXO, "") or ""),
+        "problemas": vp.problemas(payload),
+        "correcciones": list(payload.get("_correcciones") or []),
+    }
+
+
+def corregir_paciente(correlation_id, cambios: dict, usuario: str = ""):
+    """Corrige a mano apellido, nombres, fecha de nacimiento y/o sexo de una orden.
+
+    Quedan registrados en payload_dicom_raw["_correcciones"] (quien, cuando, antes y despues).
+    No cambia el documento (es la clave del paciente en el RIS). Lanza ValueError si un dato
+    no es valido; devuelve None si la orden no existe.
+    """
+    cambios = {k: v for k, v in (cambios or {}).items() if v is not None}
+    if "apellido" in cambios or "nombres" in cambios:
+        for k in ("apellido", "nombres"):
+            if k in cambios:
+                cambios[k] = " ".join(str(cambios[k]).split())
+    if "apellido" in cambios and not cambios["apellido"]:
+        raise ValueError("El apellido no puede quedar vacio.")
+    if "nombres" in cambios and not cambios["nombres"]:
+        raise ValueError("El nombre de pila no puede quedar vacio.")
+    if "fecha_nacimiento" in cambios:
+        cambios["fecha_nacimiento"] = str(cambios["fecha_nacimiento"]).strip().replace("-", "")
+        if not vp._fecha_valida(cambios["fecha_nacimiento"]):
+            raise ValueError("Fecha de nacimiento invalida (use AAAAMMDD, no futura).")
+    if "sexo" in cambios:
+        cambios["sexo"] = str(cambios["sexo"]).strip().upper()
+        if cambios["sexo"] not in vp.SEXOS_VALIDOS:
+            raise ValueError("Sexo invalido (F, M, O o U).")
+
+    db = SessionLocal()
+    try:
+        r = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).with_for_update().first()
+        if r is None or not r.payload_dicom_raw:
+            return None
+        payload = dict(r.payload_dicom_raw)
+        antes, despues = {}, {}
+
+        def poner(tag, valor):
+            if str(payload.get(tag, "") or "") != valor:
+                antes[tag], despues[tag] = payload.get(tag, ""), valor
+                payload[tag] = valor
+
+        if "apellido" in cambios or "nombres" in cambios:
+            ap, no = separar_nombre(payload.get(vp.TAG_NOMBRE))
+            ap, no = cambios.get("apellido", ap), cambios.get("nombres", no)
+            poner(vp.TAG_NOMBRE, "%s^%s" % (ap, no) if no else ap)
+        if "fecha_nacimiento" in cambios:
+            poner(vp.TAG_NACIMIENTO, cambios["fecha_nacimiento"])
+        if "sexo" in cambios:
+            poner(vp.TAG_SEXO, cambios["sexo"])
+
+        if despues:
+            payload["_correcciones"] = list(payload.get("_correcciones") or []) + [{
+                "cuando": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "usuario": usuario, "antes": antes, "despues": despues,
+            }]
+            r.payload_dicom_raw = payload
+            flag_modified(r, "payload_dicom_raw")
+            db.commit()
+            print(f"[*] Auditoría: datos del paciente corregidos en {correlation_id} por {usuario}: {list(despues)}")
+        return datos_paciente(payload)
+    except Exception:
+        db.rollback()
         raise
     finally:
         db.close()

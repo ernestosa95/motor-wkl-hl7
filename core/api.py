@@ -120,6 +120,7 @@ def auditoria_orden(correlation_id: str, db: Session = Depends(get_db),
         "ingresado": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
         "actualizado": r.updated_at.strftime("%Y-%m-%d %H:%M:%S") if r.updated_at else None,
         "payload_dicom": r.payload_dicom_raw or {},
+        "paciente_datos": auditoria.datos_paciente(r.payload_dicom_raw),
         "hl7": r.payload_hl7 or {},
         "detalles_error": r.detalles_error or None,
         "mensajes": {
@@ -175,6 +176,29 @@ def reenviar_orden(correlation_id: str, tipo: Optional[str] = None,
         raise HTTPException(status_code=409,
                             detail="No hay mensajes para reenviar: se estan enviando o reintentando ahora")
     return {"ok": True, "reenviados": [t.upper() for t in reenviados]}
+
+
+@app.put("/api/v1/trazabilidad/{correlation_id}/paciente")
+def corregir_datos_paciente(correlation_id: str, body: PacienteIn,
+                            db: Session = Depends(get_db),
+                            user: Usuario = Depends(get_current_user)):
+    """Corrige datos del paciente de una orden (queda registrado) y, si se pide, reenvia."""
+    existe = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id).first()
+    if existe is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    try:
+        datos = auditoria.corregir_paciente(
+            correlation_id,
+            {"apellido": body.apellido, "nombres": body.nombres,
+             "fecha_nacimiento": body.fecha_nacimiento, "sexo": body.sexo},
+            usuario=getattr(user, "username", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if datos is None:
+        raise HTTPException(status_code=400, detail="La orden no tiene datos para corregir")
+    reenviados = auditoria.reenviar(correlation_id) if body.reenviar else []
+    return {"ok": True, "paciente_datos": datos, "reenviados": [t.upper() for t in reenviados]}
 
 
 @app.get("/api/v1/health/channels")
@@ -251,6 +275,14 @@ class EquivalenciaIn(BaseModel):
     codigo_destino: str
     descripcion_destino: str = ""
     modalidad_ris: Optional[str] = None
+
+
+class PacienteIn(BaseModel):
+    apellido: Optional[str] = None
+    nombres: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    sexo: Optional[str] = None
+    reenviar: bool = False
 
 
 class EquipoIn(BaseModel):

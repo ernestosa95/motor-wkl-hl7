@@ -4,6 +4,7 @@ from core.mapeo_repo import obtener_mapeos, obtener_valores_fijos
 from core.catalogos import DEFAULT_MAPEOS
 from core.modalidad_ris import clasificar
 from core import equivalencias_repo, equipos_repo
+from core.validacion_paciente import validar
 
 _USA_ESTUDIO = ("{codigo_estudio}", "{descripcion_estudio}")
 _USA_EQUIPO = ("{codigo_equipo}", "{descripcion_equipo}", "{unidad_negocio}")
@@ -15,6 +16,11 @@ def _usa(valores_fijos: dict, marcadores) -> bool:
 
 def procesar_transformacion(payload_dicom: dict, tipo_mensaje: str = "ORM", msg_id: str = None) -> str:
     tipo = tipo_mensaje.upper()
+    validar(payload_dicom)  # datos minimos del paciente: si faltan, la orden se retiene
+    payload_dicom = dict(payload_dicom)
+    # DICOM usa 'O' (otro); el RIS acepta F, M y U
+    if str(payload_dicom.get("00100040", "")).strip().upper() == "O":
+        payload_dicom["00100040"] = "U"
     mapeos = obtener_mapeos(tipo) or DEFAULT_MAPEOS.get(tipo, {})
     valores_fijos = obtener_valores_fijos(tipo)
 

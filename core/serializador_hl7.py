@@ -4,6 +4,8 @@ import re
 import uuid
 import datetime
 
+from core.nombres import separar_nombre
+
 CONFIG = {
     "ADT": {
         "tipo_mensaje": "ADT^A04",
@@ -71,13 +73,7 @@ def _valor_derivado(payload: dict, tag: str, parte) -> str:
     v = str(payload.get(tag, "") or "")
     if parte not in ("apellido", "nombres"):
         return v
-    if "^" in v:  # formato DICOM: APELLIDO^NOMBRE[^...]
-        comps = v.split("^")
-        apellido, nombres = comps[0], " ".join(c for c in comps[1:] if c)
-    else:  # el worklist trae "APELLIDO NOMBRES": primera palabra = apellido
-        palabras = v.split(None, 1)
-        apellido = palabras[0] if palabras else ""
-        nombres = palabras[1] if len(palabras) > 1 else ""
+    apellido, nombres = separar_nombre(v)
     return apellido if parte == "apellido" else nombres
 
 
