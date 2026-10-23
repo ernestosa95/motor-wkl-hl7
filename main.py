@@ -12,6 +12,7 @@ import os
 import sys
 import time
 import logging
+from logging.handlers import RotatingFileHandler
 
 
 def resource_path(rel: str) -> str:
@@ -38,17 +39,28 @@ def _load_env():
         load_dotenv(env_path, override=False)
 
 
-def _setup_logging():
+def _setup_logging(cmd=None):
     logs = os.path.join(data_dir(), "logs")
     os.makedirs(logs, exist_ok=True)
+    # Un archivo por proceso (api/worker/ingesta): varios procesos no pueden
+    # rotar el mismo archivo en Windows.
+    nombre = "motordicom-%s.log" % cmd if cmd else "motordicom.log"
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(os.path.join(logs, "motordicom.log"), encoding="utf-8"),
+            RotatingFileHandler(
+                os.path.join(logs, nombre),
+                maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8",
+            ),
         ],
     )
+    # pynetdicom en INFO vuelca cada C-FIND completo (nombre, ID y fecha de
+    # nacimiento del paciente) en cada poll: volumen enorme y datos de salud en
+    # texto plano. Se activa solo para depurar: MOTORDICOM_LOG_DICOM=1
+    if os.environ.get("MOTORDICOM_LOG_DICOM") != "1":
+        logging.getLogger("pynetdicom").setLevel(logging.WARNING)
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +195,9 @@ COMANDOS = {
 
 def main():
     _load_env()
-    _setup_logging()
-
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
+    _setup_logging(cmd if cmd in COMANDOS else None)
+
     if cmd not in COMANDOS:
         print("Uso: MotorDICOM.exe [api|worker|ingesta|migrate|crear-admin]", file=sys.stderr)
         sys.exit(2)

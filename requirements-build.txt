@@ -1,0 +1,3 @@
+# Dependencias para compilar en Windows (build.bat /deps)
+-r requirements.txt
+pyinstaller

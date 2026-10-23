@@ -1,6 +1,10 @@
 """Serializador HL7 v2.5 dirigido por el mapeo + valores fijos configurados."""
+import os
+import re
 import uuid
 import datetime
+
+from core.nombres import separar_nombre
 
 CONFIG = {
     "ADT": {
@@ -15,18 +19,20 @@ CONFIG = {
     },
     "ORM": {
         "tipo_mensaje": "ORM^O01",
-        "segmentos": ["MSH", "PID", "ORC", "OBR"],
+        "segmentos": ["MSH", "PID", "PV1", "ORC", "OBR"],
         "fijos": {
             "MSH": {5: "RIS", 6: "DESTINO", 11: "P", 12: "2.5"},
             "PID": {1: "1"},
+            "PV1": {1: "1", 2: "O"},
             "ORC": {1: "NW"},
             "OBR": {1: "1"},
         },
     },
 }
 
-SENDING_APP = "MOTOR_DICOM"
-SENDING_FACILITY = "TECNOIMAGEN"
+# Identidad del emisor (MSH-3 / MSH-4) que valida el canal de Mirth.
+SENDING_APP = os.environ.get("HL7_SENDING_APP", "SISGH")
+SENDING_FACILITY = os.environ.get("HL7_SENDING_FACILITY", "ARP03")
 
 
 def escapar(valor) -> str:
@@ -41,24 +47,112 @@ def escapar(valor) -> str:
     return s.replace("\r", " ").replace("\n", " ")
 
 
-def _set_campo(segmentos, disponibles, campo, valor):
+# {00100020} -> valor del tag DICOM; {00100010:apellido} / {00100010:nombres} -> parte del nombre.
+# {ahora} -> fecha/hora del mensaje (la misma de MSH-7); {cita} -> fecha/hora de la cita del worklist.
+# {codigo_estudio} / {descripcion_estudio} -> equivalencia del estudio en el destino.
+_PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|([a-z_]+))\}")
+
+
+class DatoSinEquivalencia(Exception):
+    """Falta un dato del destino que se resuelve en la consola (estudio o equipo)."""
+
+
+class EstudioSinCodigo(DatoSinEquivalencia):
+    """El estudio del worklist no tiene equivalencia cargada en el destino."""
+
+
+class EquipoSinConfigurar(DatoSinEquivalencia):
+    """La modalidad del estudio no tiene equipo (o unidad de negocio) configurado."""
+
+
+_MARCADORES_ESTUDIO = ("codigo_estudio", "descripcion_estudio")
+_MARCADORES_EQUIPO = ("codigo_equipo", "descripcion_equipo", "unidad_negocio")
+
+
+def _valor_derivado(payload: dict, tag: str, parte) -> str:
+    v = str(payload.get(tag, "") or "")
+    if parte not in ("apellido", "nombres"):
+        return v
+    apellido, nombres = separar_nombre(v)
+    return apellido if parte == "apellido" else nombres
+
+
+def _fecha_hora_cita(payload: dict, ahora: str) -> str:
+    """Fecha/hora de la cita (AAAAMMDDhhmmss) del worklist; sin fecha usa la del mensaje."""
+    fecha = re.sub(r"\D", "", str(payload.get("00400002", "") or ""))[:8]
+    if len(fecha) != 8:
+        return ahora
+    hora = re.sub(r"\D", "", str(payload.get("00400003", "") or "").split(".")[0])[:6]
+    return fecha + hora.ljust(6, "0")
+
+
+def _marcador(nombre: str, payload: dict, ahora: str, contexto: dict) -> str:
+    if nombre == "ahora":
+        return ahora
+    if nombre == "cita":
+        return _fecha_hora_cita(payload, ahora)
+    if nombre in _MARCADORES_ESTUDIO:
+        if nombre not in contexto:
+            raise EstudioSinCodigo(
+                "Estudio sin codigo de equivalencia: %r. Cargalo en Estudios y reprocesa."
+                % (payload.get("00321060", ""),))
+        return escapar(contexto[nombre])
+    if nombre in _MARCADORES_EQUIPO:
+        if not contexto.get(nombre):
+            raise EquipoSinConfigurar(
+                "Sin %s para la modalidad %r. Configuralo en Estudios y reprocesa."
+                % ("equipo configurado" if nombre != "unidad_negocio" else "unidad de negocio configurada",
+                   contexto.get("_modalidad", "")))
+        return escapar(contexto[nombre])
+    raise ValueError("Marcador desconocido: {%s}" % nombre)
+
+
+def _renderizar_fijo(valor: str, payload: dict, ahora: str = "", contexto: dict = None) -> str:
+    """Un valor fijo es HL7 literal (^ ~ & se respetan tal cual). Solo los datos
+    DICOM insertados con {tag} se escapan; se quitan los saltos de linea."""
+    texto = _PLANTILLA.sub(
+        lambda m: _marcador(m.group(3), payload, ahora, contexto or {}) if m.group(3)
+        else escapar(_valor_derivado(payload, m.group(1), m.group(2))),
+        valor)
+    return texto.replace("\r", " ").replace("\n", " ")
+
+
+def _set_campo(segmentos, disponibles, campo, valor, crudo=False):
+    """Escribe 'SEG-N' (campo completo) o 'SEG-N.M' (componente M del campo N).
+
+    El componente se aplica sobre lo que el campo ya tenga, asi se puede agregar
+    p. ej. la autoridad asignadora (PID-3.4) sin perder el ID mapeado en PID-3.
+    crudo=True escribe el valor tal cual (ya es HL7); si no, se escapa.
+    """
     try:
-        seg, idx = campo.split("-")
+        ref, _, comp = campo.partition(".")
+        seg, idx = ref.split("-")
         idx = int(idx)
+        comp = int(comp) if comp else 0
     except (ValueError, AttributeError):
         return
-    if seg in disponibles:
-        segmentos[seg][idx] = escapar(valor)
+    if seg not in disponibles:
+        return
+    if not crudo:
+        valor = escapar(valor)
+    if not comp:
+        segmentos[seg][idx] = valor
+        return
+    partes = segmentos[seg].get(idx, "").split("^")
+    partes += [""] * (comp - len(partes))
+    partes[comp - 1] = valor
+    segmentos[seg][idx] = "^".join(partes)
 
 
-def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str) -> str:
+def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str,
+                      msg_id: str = None, contexto: dict = None) -> str:
     tipo = tipo.upper()
     if tipo not in CONFIG:
         raise ValueError(f"Tipo de mensaje no soportado: {tipo}")
 
     cfg = CONFIG[tipo]
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    msg_id = uuid.uuid4().hex[:10].upper()
+    msg_id = msg_id or uuid.uuid4().hex[:10].upper()
 
     segmentos = {nombre: dict(cfg["fijos"].get(nombre, {})) for nombre in cfg["segmentos"]}
     disponibles = set(cfg["segmentos"])
@@ -80,9 +174,12 @@ def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, ti
             _set_campo(segmentos, disponibles, campo, valor)
 
     # 2) Valores fijos definidos por el usuario (sobrescriben).
-    for campo, valor in (valores_fijos or {}).items():
+    # Primero los campos completos y luego los componentes ("PID-3.4"), para que
+    # estos ultimos se apliquen sobre el valor final del campo.
+    for campo, valor in sorted((valores_fijos or {}).items(), key=lambda kv: "." in kv[0]):
         if valor is not None and str(valor) != "":
-            _set_campo(segmentos, disponibles, campo, str(valor))
+            _set_campo(segmentos, disponibles, campo,
+                       _renderizar_fijo(str(valor), payload_dicom, timestamp, contexto), crudo=True)
 
     # Serialización.
     lineas = []

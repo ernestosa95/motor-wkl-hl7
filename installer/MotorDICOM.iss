@@ -1,7 +1,7 @@
 ; =============================================================================
 ;  MotorDICOM - Instalador (Inno Setup 6+)
 ;  Compilar con:  iscc MotorDICOM.iss
-;  Genera:        dist_installer\MotorDICOM-Setup.exe
+;  Genera:        dist_installer\MotorDICOM-Setup-<version>.exe  (ver build.bat)
 ;
 ;  Estructura esperada junto a este .iss antes de compilar:
 ;    ..\dist\MotorDICOM\        (salida onedir de PyInstaller)
@@ -13,7 +13,10 @@
 ; =============================================================================
 
 #define AppName "MotorDICOM"
-#define AppVersion "1.0.0"
+; build.bat la pasa con /DAppVersion=x.y.z; si se compila a mano queda 1.0.0
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 #define Publisher "Tecnoimagen SA"
 
 [Setup]
@@ -23,7 +26,7 @@ AppPublisher={#Publisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputDir=..\dist_installer
-OutputBaseFilename={#AppName}-Setup
+OutputBaseFilename={#AppName}-Setup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -47,6 +50,7 @@ Source: "..\vendor\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinsta
 ; Scripts de orquestacion
 Source: "postinstall.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "postuninstall.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "backup_db.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Consola MotorDICOM"; Filename: "http://localhost:8000"
@@ -69,3 +73,25 @@ Filename: "powershell.exe"; \
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\postuninstall.ps1"" -InstallDir ""{app}"""; \
   RunOnceId: "RemoveServices"; Flags: runhidden waituntilterminated
+
+[Code]
+// Reinstalacion / actualizacion: los servicios mantienen abiertos MotorDICOM.exe
+// y los binarios de PostgreSQL; hay que detenerlos antes de copiar archivos
+// (sino DeleteFile falla con codigo 5). postinstall.ps1 los vuelve a levantar.
+procedure DetenerServicio(const Nombre: String);
+var
+  Rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\net.exe'), 'stop "' + Nombre + '" /y', '',
+    SW_HIDE, ewWaitUntilTerminated, Rc);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  WizardForm.PreparingLabel.Caption := 'Deteniendo servicios de MotorDICOM...';
+  DetenerServicio('MotorDICOM Ingesta');
+  DetenerServicio('MotorDICOM Worker');
+  DetenerServicio('MotorDICOM API');
+  DetenerServicio('MotorDICOM Postgres');
+end;

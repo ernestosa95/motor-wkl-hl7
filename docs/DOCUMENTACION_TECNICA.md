@@ -1,6 +1,8 @@
 # Motor de Integración DICOM → HL7
 ## Documentación técnica de la solución
 
+> Configuración, hallazgos y pendientes de la integración con SUITESTENSA (ADT/ORM, estudios, Mirth): ver [`INTEGRACION_SUITESTENSA.md`](INTEGRACION_SUITESTENSA.md).
+
 **Producto:** MotorDICOM — Motor de integración clínica
 **Organización:** Tecnoimagen SA
 **Estado:** MVP funcional, validado de punta a punta

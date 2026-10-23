@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
 from core.auth import autenticar, crear_token, get_current_user, get_usuario_token, get_db, hash_password
-from core import config_repo, mapeo_repo, auditoria
+from core import config_repo, mapeo_repo, auditoria, equivalencias_repo, equipos_repo
 from core.conectividad import test_dicom_echo, test_mllp
 
 app = FastAPI(title="Motor HL7 API", version="1.6")
@@ -17,7 +17,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -80,6 +80,7 @@ def obtener_registros(db: Session = Depends(get_db), _user: Usuario = Depends(ge
             "estado": r.estado.name,
             "fecha": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             "tiene_hl7": bool(r.payload_hl7),
+            "mensajes": auditoria.resumen_envios(r.payload_hl7),
         }
         for r in registros
     ]
@@ -119,30 +120,85 @@ def auditoria_orden(correlation_id: str, db: Session = Depends(get_db),
         "ingresado": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
         "actualizado": r.updated_at.strftime("%Y-%m-%d %H:%M:%S") if r.updated_at else None,
         "payload_dicom": r.payload_dicom_raw or {},
+        "paciente_datos": auditoria.datos_paciente(r.payload_dicom_raw),
         "hl7": r.payload_hl7 or {},
         "detalles_error": r.detalles_error or None,
+        "mensajes": {
+            t: {**(e or {}), "estado": auditoria.estado_mensaje(e)}
+            for t, e in (((r.payload_hl7 or {}).get("envios")) or {}).items()
+        },
     }
 
 
 @app.post("/api/v1/trazabilidad/{correlation_id}/reprocesar")
-def reprocesar_orden(correlation_id: str, db: Session = Depends(get_db),
+def reprocesar_orden(correlation_id: str, tipo: Optional[str] = None,
+                     db: Session = Depends(get_db),
                      _user: Usuario = Depends(get_current_user)):
+    """Reprocesa los mensajes en error permanente (ADT, ORM o ambos con tipo vacio)."""
     r = db.query(RegistroTrazabilidad).filter(
         RegistroTrazabilidad.correlation_id == correlation_id
     ).first()
     if r is None:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
-    if r.estado == EstadoMensaje.ERROR_EMISION:
-        # Ya hay un reintento automatico en cola; reprocesar ahora duplicaria el envio.
-        raise HTTPException(status_code=409,
-                            detail="Hay un reintento automatico pendiente para esta orden")
+    if tipo is not None and tipo.lower() not in ("adt", "orm"):
+        raise HTTPException(status_code=400, detail="Tipo de mensaje invalido (adt | orm)")
     if r.estado == EstadoMensaje.COMPLETADO:
         raise HTTPException(status_code=409, detail="La orden ya fue completada")
-    ok = auditoria.reprocesar(correlation_id)
-    if not ok:
+    if not r.payload_dicom_raw:
         raise HTTPException(status_code=400,
                             detail="No se pudo reprocesar (sin payload original)")
-    return {"ok": True}
+    reencolados = auditoria.reprocesar(correlation_id, tipo)
+    if not reencolados:
+        # Sin mensajes en error permanente: o ya hay un reintento automatico en cola
+        # (reprocesar ahora duplicaria el envio) o ese mensaje ya fue aceptado.
+        raise HTTPException(status_code=409,
+                            detail="No hay mensajes en error permanente para reprocesar "
+                                   "(hay un reintento automatico pendiente o ya fueron aceptados)")
+    return {"ok": True, "reprocesados": [t.upper() for t in reencolados]}
+
+
+@app.post("/api/v1/trazabilidad/{correlation_id}/reenviar")
+def reenviar_orden(correlation_id: str, tipo: Optional[str] = None,
+                   db: Session = Depends(get_db),
+                   _user: Usuario = Depends(get_current_user)):
+    """Reenvia ADT, ORM o ambos (tipo vacio) aunque ya hayan sido aceptados."""
+    r = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id
+    ).first()
+    if r is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    if tipo is not None and tipo.lower() not in ("adt", "orm"):
+        raise HTTPException(status_code=400, detail="Tipo de mensaje invalido (adt | orm)")
+    if not r.payload_dicom_raw:
+        raise HTTPException(status_code=400, detail="No se pudo reenviar (sin payload original)")
+    reenviados = auditoria.reenviar(correlation_id, tipo)
+    if not reenviados:
+        raise HTTPException(status_code=409,
+                            detail="No hay mensajes para reenviar: se estan enviando o reintentando ahora")
+    return {"ok": True, "reenviados": [t.upper() for t in reenviados]}
+
+
+@app.put("/api/v1/trazabilidad/{correlation_id}/paciente")
+def corregir_datos_paciente(correlation_id: str, body: PacienteIn,
+                            db: Session = Depends(get_db),
+                            user: Usuario = Depends(get_current_user)):
+    """Corrige datos del paciente de una orden (queda registrado) y, si se pide, reenvia."""
+    existe = db.query(RegistroTrazabilidad).filter(
+        RegistroTrazabilidad.correlation_id == correlation_id).first()
+    if existe is None:
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    try:
+        datos = auditoria.corregir_paciente(
+            correlation_id,
+            {"apellido": body.apellido, "nombres": body.nombres,
+             "fecha_nacimiento": body.fecha_nacimiento, "sexo": body.sexo},
+            usuario=getattr(user, "username", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if datos is None:
+        raise HTTPException(status_code=400, detail="La orden no tiene datos para corregir")
+    reenviados = auditoria.reenviar(correlation_id) if body.reenviar else []
+    return {"ok": True, "paciente_datos": datos, "reenviados": [t.upper() for t in reenviados]}
 
 
 @app.get("/api/v1/health/channels")
@@ -210,3 +266,77 @@ def guardar_mapeos(tipo: str, body: MapeosIn, _user: Usuario = Depends(get_curre
     if tipo not in ("ADT", "ORM"):
         raise HTTPException(status_code=404, detail="Tipo de mensaje inválido")
     return mapeo_repo.reemplazar(tipo, body.mapeos, body.valores_fijos)
+
+
+# ---------- Equivalencias de estudio (texto del worklist -> codigo del destino) ----------
+
+class EquivalenciaIn(BaseModel):
+    descripcion_origen: str
+    codigo_destino: str
+    descripcion_destino: str = ""
+    modalidad_ris: Optional[str] = None
+
+
+class PacienteIn(BaseModel):
+    apellido: Optional[str] = None
+    nombres: Optional[str] = None
+    fecha_nacimiento: Optional[str] = None
+    sexo: Optional[str] = None
+    reenviar: bool = False
+
+
+class EquipoIn(BaseModel):
+    codigo_equipo: str
+    descripcion_equipo: str = ""
+    unidad_negocio: str = ""
+
+
+class ImportarIn(BaseModel):
+    csv: str
+
+
+@app.get("/api/v1/equivalencias")
+def listar_equivalencias(_user: Usuario = Depends(get_current_user)):
+    return equivalencias_repo.panel()
+
+
+@app.put("/api/v1/equivalencias")
+def guardar_equivalencia(body: EquivalenciaIn, _user: Usuario = Depends(get_current_user)):
+    try:
+        return equivalencias_repo.upsert(body.descripcion_origen, body.codigo_destino,
+                                         body.descripcion_destino, body.modalidad_ris)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/v1/equivalencias/{id_}")
+def eliminar_equivalencia(id_: str, _user: Usuario = Depends(get_current_user)):
+    if not equivalencias_repo.eliminar(id_):
+        raise HTTPException(status_code=404, detail="Equivalencia no encontrada")
+    return {"ok": True}
+
+
+@app.post("/api/v1/equivalencias/importar")
+def importar_equivalencias(body: ImportarIn, _user: Usuario = Depends(get_current_user)):
+    return equivalencias_repo.importar_csv(body.csv)
+
+
+# ---------- Equipo por modalidad ----------
+
+@app.get("/api/v1/equipos")
+def listar_equipos(_user: Usuario = Depends(get_current_user)):
+    return equipos_repo.listar()
+
+
+@app.put("/api/v1/equipos/{modalidad}")
+def guardar_equipo(modalidad: str, body: EquipoIn, _user: Usuario = Depends(get_current_user)):
+    try:
+        return equipos_repo.guardar(modalidad, body.codigo_equipo, body.descripcion_equipo,
+                                    body.unidad_negocio)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/equipos/restaurar")
+def restaurar_equipos(_user: Usuario = Depends(get_current_user)):
+    return equipos_repo.restaurar()

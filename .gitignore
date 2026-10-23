@@ -21,3 +21,13 @@ frontend-motor/dist/
 .env
 # Credenciales / scripts locales
 usuario.txt
+
+# Build
+build.log
+
+# Pruebas
+tests/.datos/
+.pytest_cache/
+
+# Salida de compilacion del frontend (la genera build.bat desde frontend-motor)
+static/

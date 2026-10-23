@@ -18,6 +18,10 @@ jinja2
 pynetdicom
 pydicom
 
+# --- Configuración ---
+python-dotenv             # main.py lee el .env del instalador; sin esto no conecta a la base
+
 # --- Autenticación ---
 PyJWT
 passlib[bcrypt]
+bcrypt>=4.0.1,<5          # passlib no es compatible con bcrypt 5.x (login falla: "password cannot be longer than 72 bytes")

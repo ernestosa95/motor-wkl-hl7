@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Activity, Network, GitCompareArrows, LogOut } from 'lucide-react';
+import { Activity, Network, GitCompareArrows, ClipboardList, LogOut } from 'lucide-react';
 import Monitor from './components/Monitor';
 import Canales from './components/Canales';
 import Mapeos from './components/Mapeos';
+import Estudios from './components/Estudios';
 import Login from './components/Login';
 import CambiarPassword from './components/CambiarPassword';
 
@@ -13,6 +14,8 @@ const SECCIONES = [
     titulo: 'Canales y conexiones', subtitulo: 'Endpoints DICOM y MLLP, con prueba de conectividad.' },
   { id: 'mapeo', label: 'Mapeo', icon: GitCompareArrows,
     titulo: 'Mapeo DICOM → HL7', subtitulo: 'Definí a qué campos HL7 se envía cada tag DICOM.' },
+  { id: 'estudios', label: 'Estudios', icon: ClipboardList,
+    titulo: 'Codificación de estudios', subtitulo: 'Equivalencia entre el estudio del worklist y su código en el destino.' },
 ];
 
 export default function App() {
@@ -130,6 +133,7 @@ export default function App() {
             {seccion === 'monitor' && <Monitor />}
             {seccion === 'canales' && <Canales />}
             {seccion === 'mapeo' && <Mapeos />}
+            {seccion === 'estudios' && <Estudios />}
           </div>
         </main>
       </div>
