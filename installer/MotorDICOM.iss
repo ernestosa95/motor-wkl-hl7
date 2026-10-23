@@ -72,3 +72,25 @@ Filename: "powershell.exe"; \
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\postuninstall.ps1"" -InstallDir ""{app}"""; \
   RunOnceId: "RemoveServices"; Flags: runhidden waituntilterminated
+
+[Code]
+// Reinstalacion / actualizacion: los servicios mantienen abiertos MotorDICOM.exe
+// y los binarios de PostgreSQL; hay que detenerlos antes de copiar archivos
+// (sino DeleteFile falla con codigo 5). postinstall.ps1 los vuelve a levantar.
+procedure DetenerServicio(const Nombre: String);
+var
+  Rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\net.exe'), 'stop "' + Nombre + '" /y', '',
+    SW_HIDE, ewWaitUntilTerminated, Rc);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  WizardForm.PreparingLabel.Caption := 'Deteniendo servicios de MotorDICOM...';
+  DetenerServicio('MotorDICOM Ingesta');
+  DetenerServicio('MotorDICOM Worker');
+  DetenerServicio('MotorDICOM API');
+  DetenerServicio('MotorDICOM Postgres');
+end;
