@@ -96,6 +96,8 @@ set "ISCC="
 for /f "delims=" %%i in ('where iscc 2^>nul') do if "!ISCC!"=="" set "ISCC=%%i"
 if "%ISCC%"=="" if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if "%ISCC%"=="" if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+rem Instalacion "solo para mi usuario" (sin admin)
+if "%ISCC%"=="" if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if "%ISCC%"=="" (echo [ERROR] No se encontro Inno Setup 6 ^(ISCC.exe^). Instalalo o usa /noinstaller & goto fallo)
 echo   - Inno Setup: %ISCC%
 
