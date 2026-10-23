@@ -18,7 +18,8 @@ from pynetdicom import AE
 from pynetdicom.sop_class import ModalityWorklistInformationFind
 
 PACIENTE = ("PatientName", "PatientID", "PatientBirthDate", "OtherPatientIDs",
-            "PatientAddress", "PatientTelephoneNumbers", "PatientMotherBirthName")
+            "PatientAddress", "PatientTelephoneNumbers", "PatientMotherBirthName",
+            "StudyInstanceUID")  # el UID de este origen termina con el ID del paciente
 
 
 def _codigo(ds):
@@ -66,6 +67,9 @@ def main():
                     help="fecha programada AAAAMMDD (por defecto hoy; '' = todas)")
     ap.add_argument("--max", type=int, default=3, help="cuantos estudios volcar completos")
     ap.add_argument("--mostrar-paciente", action="store_true", help="incluir datos del paciente")
+    ap.add_argument("--combinadas", action="store_true",
+                    help="volcar solo los estudios cuyo texto lista varios procedimientos (con ', ') "
+                         "y mostrar cuantos pasos programados (SPS) trae cada uno")
     a = ap.parse_args()
 
     ae = AE(ae_title=a.aet_propio)
@@ -83,6 +87,15 @@ def main():
     print("Estudios recibidos para %s: %d\n" % (a.fecha or "todas las fechas", len(resultados)))
     if not resultados:
         return
+
+    if a.combinadas:
+        resultados = [d for d in resultados if ", " in str(getattr(d, "RequestedProcedureDescription", ""))]
+        print("Estudios con varios procedimientos en el texto: %d\n" % len(resultados))
+        for ds in resultados:
+            n_sps = len(ds.ScheduledProcedureStepSequence) if "ScheduledProcedureStepSequence" in ds else 0
+            print("  texto=%d caracteres | pasos programados (SPS)=%d | RequestedProcedureID=%s" % (
+                len(str(ds.RequestedProcedureDescription)), n_sps, getattr(ds, "RequestedProcedureID", "")))
+        print()
 
     # Volcado completo (sin paciente salvo que se pida) de los primeros estudios
     for n, ds in enumerate(resultados[:a.max], 1):

@@ -50,6 +50,7 @@ Source: "..\vendor\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinsta
 ; Scripts de orquestacion
 Source: "postinstall.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 Source: "postuninstall.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
+Source: "backup_db.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Consola MotorDICOM"; Filename: "http://localhost:8000"
