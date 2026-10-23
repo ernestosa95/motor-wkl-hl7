@@ -1,5 +1,8 @@
-# Integración con SUITESTENSA — guía de configuración y bitácora
+# Integración con SUITESTENSA — caso de referencia y bitácora
 
+> **¿Vas a desplegar en otro hospital?** Empieza por la [guía de despliegue](GUIA_DESPLIEGUE_HOSPITAL.md) y la [hoja de parámetros](PLANTILLA_PARAMETROS_HOSPITAL.md).
+> Este documento es el **caso de referencia** (primer hospital, sitio `ARP03`): el detalle técnico, la bitácora y las decisiones.
+>
 > Estado al **2026-10-23**. Este documento recoge lo que se construyó, lo que se configuró, lo que se
 > descubrió del sistema destino y lo que queda pendiente. Complementa a `DOCUMENTACION_TECNICA.md`
 > (arquitectura general). No contiene datos de pacientes: los ejemplos son ficticios.
@@ -17,7 +20,7 @@
 | **ADT^A04** (alta/admisión del paciente) | ✅ Funciona de punta a punta: el RIS crea el paciente (`Resultado: Yes`). |
 | **ORM^O01** (orden del estudio) | ✅ **Funciona** (2026-10-23): las órdenes aparecen en la pantalla *Ejecución* de SUITESTENSA con su estudio, hora y equipo (p. ej. `TC de abdomen y pelvis` → `TOMOGRAFIA`; `radiografía simple de mano` → `RX FIJO TECNO`). Hizo falta corregir 314 códigos de examen en colisión (11.0), mapear el equipo y la unidad de negocio (10.2) y configurar en el RIS las relaciones de la unidad de negocio (8.2). |
 
-Lo pendiente principal ya no es el flujo básico sino la **robustez**: codificación de caracteres (sección 12), órdenes con varios estudios (11.4 y 18), identidad del paciente (`PK`) y los flujos RIS → HIS (sección 16).
+El flujo básico funciona de punta a punta. Lo pendiente es la **puesta en operación**: textos cortados a 64 caracteres, pacientes creados antes del cambio de codificación, el riesgo del `PK` y los flujos RIS → HIS (secciones 16 y 18).
 
 Cadena completa:
 
@@ -419,6 +422,8 @@ Al cruzar el catálogo del RIS con los 522 estudios del motor (códigos 1 a 522)
 **Riesgo (mientras no se corrija):** el motor tiene cargados esos 314 códigos. Hoy el RIS los rechaza (`not encoded`), pero si alguna vez
 reconociera un código por `Code`, una orden se registraría con el examen equivocado (p. ej. `101` = `MAMOGRAFIA BILATERAL`).
 
+**Esto ya está automatizado:** `python tools\cruzar_catalogo_ris.py motor.csv exams.csv --salida cruce` detecta las colisiones y asigna códigos libres (reproduce exactamente los archivos de abajo; ver la guía de despliegue, Fase E4).
+
 **Corrección propuesta** (archivos generados el 2026-10-23):
 1. Dar de alta en el RIS los 314 estudios con **códigos nuevos `523–836`** (hueco libre del RIS, sin colisión).
 2. Importar en *Estudios* el listado completo corregido (208 sin cambios + 314 con código nuevo); la importación actualiza los existentes.
@@ -683,4 +688,8 @@ En este entorno el motor entrega a Mirth (`172.31.3.150:5556`); los flujos RIS �
 | `frontend-motor/src/components/` | `Monitor`, `AuditoriaModal`, `Canales`, `Mapeos`, `Estudios` |
 | `tools/consultar_worklist.py` | Inspección del worklist de origen |
 | `tools/clasificar_modalidad_ris.py` | Asignación de modalidad del RIS a cada estudio (usa `core/modalidad_ris.py`) |
+| `tools/cruzar_catalogo_ris.py` | Cruce con el catálogo del RIS: detecta colisiones de código y asigna códigos libres |
+| `core/nombres.py`, `core/validacion_paciente.py` | Separación del nombre y validación de datos mínimos del paciente |
+| `installer/backup_db.ps1` | Respaldo de la base con `pg_dump` (programable) |
+| `tests/` | Pruebas automatizadas (`python -m pytest tests -q`) |
 | `build.bat`, `installer/` | Construcción del instalador |

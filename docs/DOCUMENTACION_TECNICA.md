@@ -2,6 +2,7 @@
 ## Documentación técnica de la solución
 
 > Configuración, hallazgos y pendientes de la integración con SUITESTENSA (ADT/ORM, estudios, Mirth): ver [`INTEGRACION_SUITESTENSA.md`](INTEGRACION_SUITESTENSA.md).
+> Para desplegar en un hospital nuevo: [`GUIA_DESPLIEGUE_HOSPITAL.md`](GUIA_DESPLIEGUE_HOSPITAL.md) y [`PLANTILLA_PARAMETROS_HOSPITAL.md`](PLANTILLA_PARAMETROS_HOSPITAL.md). Índice: [`README.md`](README.md).
 
 **Producto:** MotorDICOM — Motor de integración clínica
 **Organización:** Tecnoimagen SA
