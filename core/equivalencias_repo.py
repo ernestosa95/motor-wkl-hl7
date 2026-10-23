@@ -106,33 +106,36 @@ def eliminar(id_) -> bool:
 
 
 def parsear_csv(texto: str):
-    """CSV con columnas: descripcion_origen ; codigo ; [descripcion_destino].
+    """CSV con columnas: descripcion_origen ; codigo ; [descripcion_destino] ; (extras ignoradas).
 
-    Acepta separador ; , o tabulador y una fila de encabezado opcional.
-    Devuelve (filas, errores): filas = [(origen, codigo, destino)].
+    Acepta separador ; , o tabulador y una fila de encabezado opcional. Las filas con
+    descripcion pero sin codigo (aun no completadas, como las que trae la exportacion
+    de pendientes) se omiten sin ser un error.
+    Devuelve (filas, errores, omitidas): filas = [(origen, codigo, destino)].
     """
     texto = (texto or "").lstrip("\ufeff")
-    try:
-        dialecto = csv.Sniffer().sniff(texto.split("\n", 1)[0], delimiters=";,\t")
-    except csv.Error:
-        dialecto = csv.excel
-        dialecto.delimiter = ";"
-    filas, errores = [], []
-    for n, fila in enumerate(csv.reader(io.StringIO(texto), dialecto), 1):
+    # Solo se detecta el separador; las comillas siguen el formato estandar (""
+    # escapa una comilla). El Sniffer deduce mal las comillas desde la 1a linea.
+    primera = texto.split("\n", 1)[0]
+    separador = max(";,\t", key=primera.count) if any(c in primera for c in ";,\t") else ";"
+    filas, errores, omitidas = [], [], 0
+    for n, fila in enumerate(csv.reader(io.StringIO(texto), delimiter=separador), 1):
         celdas = [c.strip() for c in fila]
         if not any(celdas):
             continue
         if n == 1 and normalizar(celdas[0]) in ("descripcion_origen", "descripcion", "estudio", "origen"):
             continue  # encabezado
-        if len(celdas) < 2 or not celdas[0] or not celdas[1]:
-            errores.append("Fila %d: faltan la descripcion o el codigo." % n)
-            continue
-        filas.append((celdas[0], celdas[1], celdas[2] if len(celdas) > 2 else ""))
-    return filas, errores
+        if not celdas[0]:
+            errores.append("Fila %d: falta la descripcion de origen." % n)
+        elif len(celdas) < 2 or not celdas[1]:
+            omitidas += 1  # todavia sin codigo
+        else:
+            filas.append((celdas[0], celdas[1], celdas[2] if len(celdas) > 2 else ""))
+    return filas, errores, omitidas
 
 
 def importar_csv(texto: str) -> dict:
-    filas, errores = parsear_csv(texto)
+    filas, errores, omitidas = parsear_csv(texto)
     existentes = {e["descripcion_origen"] for e in listar()}
     nuevos = actualizados = 0
     for origen, codigo, destino in filas:
@@ -141,7 +144,7 @@ def importar_csv(texto: str) -> dict:
         else:
             nuevos += 1
         upsert(origen, codigo, destino)
-    return {"nuevos": nuevos, "actualizados": actualizados, "errores": errores}
+    return {"nuevos": nuevos, "actualizados": actualizados, "omitidas": omitidas, "errores": errores}
 
 
 def pendientes() -> list:

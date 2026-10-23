@@ -1,9 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Save, Loader2, Trash2, Upload, AlertTriangle, Search } from 'lucide-react';
+import { Save, Loader2, Trash2, Upload, Download, AlertTriangle, Search } from 'lucide-react';
 import { apiFetch } from './Login';
 
 const input =
   'w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500';
+
+// Celda CSV: se entrecomilla si lleva separador, comillas o saltos de línea.
+const celda = (v) => {
+  const t = String(v ?? '');
+  return /[;"\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+};
+
+// CSV con BOM UTF-8 y ';' como separador: Excel en español lo abre bien (tildes incluidas).
+const descargarCsv = (nombre, filas) => {
+  const texto = '\ufeff' + filas.map((f) => f.map(celda).join(';')).join('\r\n') + '\r\n';
+  const url = URL.createObjectURL(new Blob([texto], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nombre;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+const hoy = () => new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
 export default function Estudios() {
   const [data, setData] = useState(null);
@@ -47,6 +66,18 @@ export default function Estudios() {
     }
   };
 
+  const exportarPendientes = () =>
+    descargarCsv(`estudios_pendientes_${hoy()}.csv`, [
+      ['descripcion_origen', 'codigo', 'descripcion_destino', 'ordenes'],
+      ...data.pendientes.map((p) => [p.descripcion, '', '', p.cantidad]),
+    ]);
+
+  const exportarEquivalencias = () =>
+    descargarCsv(`estudios_equivalencias_${hoy()}.csv`, [
+      ['descripcion_origen', 'codigo', 'descripcion_destino'],
+      ...data.equivalencias.map((e) => [e.descripcion_origen, e.codigo_destino, e.descripcion_destino]),
+    ]);
+
   const eliminar = async (e) => {
     if (!window.confirm(`¿Eliminar la equivalencia de "${e.descripcion_origen}"?`)) return;
     const res = await apiFetch(`/api/v1/equivalencias/${e.id}`, { method: 'DELETE' });
@@ -59,7 +90,14 @@ export default function Estudios() {
     ev.target.value = '';
     if (!f) return;
     setAviso(null);
-    const texto = await f.text();
+    // Excel puede guardar en Windows-1252: si no es UTF-8 válido se decodifica así.
+    const buf = await f.arrayBuffer();
+    let texto;
+    try {
+      texto = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch {
+      texto = new TextDecoder('windows-1252').decode(buf);
+    }
     const res = await apiFetch('/api/v1/equivalencias/importar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -68,7 +106,7 @@ export default function Estudios() {
     if (res.ok) {
       const r = await res.json();
       const errs = r.errores?.length ? ` ${r.errores.length} fila(s) con error: ${r.errores.slice(0, 3).join(' ')}` : '';
-      setAviso({ ok: !r.errores?.length, texto: `Importado: ${r.nuevos} nuevas, ${r.actualizados} actualizadas.${errs}` });
+      setAviso({ ok: !r.errores?.length, texto: `Importado: ${r.nuevos} nuevas, ${r.actualizados} actualizadas, ${r.omitidas || 0} sin código (omitidas).${errs}` });
       await cargar();
     } else {
       setAviso({ ok: false, texto: 'No se pudo importar el archivo.' });
@@ -101,11 +139,20 @@ export default function Estudios() {
       {/* Pendientes */}
       {data.pendientes.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-white overflow-hidden">
-          <div className="px-5 py-3 border-b border-amber-100 bg-amber-50 flex items-center gap-2">
-            <AlertTriangle size={15} className="text-amber-600" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-700">
-              Sin código ({data.pendientes.length})
-            </h3>
+          <div className="px-5 py-3 border-b border-amber-100 bg-amber-50 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={15} className="text-amber-600" />
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-700">
+                Sin código ({data.pendientes.length})
+              </h3>
+            </div>
+            <button
+              onClick={exportarPendientes}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100"
+              title="Descarga un CSV con los pendientes para completar el código y volver a importarlo"
+            >
+              <Download size={14} /> Exportar pendientes (CSV)
+            </button>
           </div>
           <div className="divide-y divide-zinc-100">
             {data.pendientes.map((p) => {
@@ -147,6 +194,14 @@ export default function Estudios() {
               <input className={`${input} pl-8 w-56`} placeholder="Buscar…" value={filtro}
                 onChange={(e) => setFiltro(e.target.value)} />
             </div>
+            <button
+              onClick={exportarEquivalencias}
+              disabled={data.equivalencias.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-40"
+              title="Descarga las equivalencias cargadas (respaldo o edición masiva)"
+            >
+              <Download size={15} /> Exportar CSV
+            </button>
             <input ref={archivo} type="file" accept=".csv,.txt" className="hidden" onChange={importar} />
             <button
               onClick={() => archivo.current?.click()}
