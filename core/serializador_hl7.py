@@ -17,10 +17,11 @@ CONFIG = {
     },
     "ORM": {
         "tipo_mensaje": "ORM^O01",
-        "segmentos": ["MSH", "PID", "ORC", "OBR"],
+        "segmentos": ["MSH", "PID", "PV1", "ORC", "OBR"],
         "fijos": {
             "MSH": {5: "RIS", 6: "DESTINO", 11: "P", 12: "2.5"},
             "PID": {1: "1"},
+            "PV1": {1: "1", 2: "O"},
             "ORC": {1: "NW"},
             "OBR": {1: "1"},
         },
@@ -45,7 +46,8 @@ def escapar(valor) -> str:
 
 
 # {00100020} -> valor del tag DICOM; {00100010:apellido} / {00100010:nombres} -> parte del nombre.
-_PLANTILLA = re.compile(r"\{([0-9A-Fa-f]{8})(?::([a-z]+))?\}")
+# {ahora} -> fecha/hora del mensaje (la misma de MSH-7).
+_PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|(ahora))\}")
 
 
 def _valor_derivado(payload: dict, tag: str, parte) -> str:
@@ -62,11 +64,12 @@ def _valor_derivado(payload: dict, tag: str, parte) -> str:
     return apellido if parte == "apellido" else nombres
 
 
-def _renderizar_fijo(valor: str, payload: dict) -> str:
+def _renderizar_fijo(valor: str, payload: dict, ahora: str = "") -> str:
     """Un valor fijo es HL7 literal (^ ~ & se respetan tal cual). Solo los datos
     DICOM insertados con {tag} se escapan; se quitan los saltos de linea."""
     texto = _PLANTILLA.sub(
-        lambda m: escapar(_valor_derivado(payload, m.group(1), m.group(2))), valor)
+        lambda m: ahora if m.group(3) else escapar(_valor_derivado(payload, m.group(1), m.group(2))),
+        valor)
     return texto.replace("\r", " ").replace("\n", " ")
 
 
@@ -132,7 +135,7 @@ def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, ti
     for campo, valor in sorted((valores_fijos or {}).items(), key=lambda kv: "." in kv[0]):
         if valor is not None and str(valor) != "":
             _set_campo(segmentos, disponibles, campo,
-                       _renderizar_fijo(str(valor), payload_dicom), crudo=True)
+                       _renderizar_fijo(str(valor), payload_dicom, timestamp), crudo=True)
 
     # Serialización.
     lineas = []

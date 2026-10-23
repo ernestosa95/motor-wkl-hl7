@@ -11,6 +11,13 @@ CATALOGO_DICOM = [
     {"tag": "00080090", "nombre": "Referring Physician's Name"},
     {"tag": "00080060", "nombre": "Modality"},
     {"tag": "00400002", "nombre": "Scheduled Procedure Step Start Date"},
+    # Datos extra del worklist (si el servidor los entrega)
+    {"tag": "00401001", "nombre": "Requested Procedure ID"},
+    {"tag": "00321064", "nombre": "Requested Procedure Code Value"},
+    {"tag": "00400009", "nombre": "Scheduled Procedure Step ID"},
+    {"tag": "00400007", "nombre": "Scheduled Procedure Step Description"},
+    {"tag": "00400003", "nombre": "Scheduled Procedure Step Start Time"},
+    {"tag": "00400001", "nombre": "Scheduled Station AE Title"},
 ]
 
 # Campos HL7 destino, agrupados por segmento. Sirven como destino de un tag DICOM
@@ -72,10 +79,13 @@ CATALOGO_HL7 = [
     {"campo": "ORC-1",  "segmento": "ORC", "descripcion": "Control de orden (def. NW)"},
     {"campo": "ORC-2",  "segmento": "ORC", "descripcion": "Nº de orden"},
     {"campo": "ORC-3",  "segmento": "ORC", "descripcion": "Nº de orden (filler)"},
+    {"campo": "ORC-4",  "segmento": "ORC", "descripcion": "Nº de grupo de orden (placer group)"},
     {"campo": "ORC-5",  "segmento": "ORC", "descripcion": "Estado de la orden"},
+    {"campo": "ORC-7",  "segmento": "ORC", "descripcion": "Cantidad/tiempo (ej. 1^^^{ahora}^^1)"},
     {"campo": "ORC-9",  "segmento": "ORC", "descripcion": "Fecha/hora de la transacción"},
     {"campo": "ORC-12", "segmento": "ORC", "descripcion": "Médico que ordena"},
     {"campo": "ORC-13", "segmento": "ORC", "descripcion": "Ubicación de quien ordena"},
+    {"campo": "ORC-17", "segmento": "ORC", "descripcion": "Organización que ingresa la orden (ej. 02020501^O)"},
     # --- OBR ---
     {"campo": "OBR-2",  "segmento": "OBR", "descripcion": "Nº de orden (placer)"},
     {"campo": "OBR-3",  "segmento": "OBR", "descripcion": "Nº de orden (filler / accession)"},
@@ -88,6 +98,7 @@ CATALOGO_HL7 = [
     {"campo": "OBR-18", "segmento": "OBR", "descripcion": "Campo libre 1 (placer)"},
     {"campo": "OBR-19", "segmento": "OBR", "descripcion": "Campo libre 2 (placer)"},
     {"campo": "OBR-24", "segmento": "OBR", "descripcion": "Modalidad / sección diagnóstica"},
+    {"campo": "OBR-25", "segmento": "OBR", "descripcion": "Cantidad/tiempo (ej. 1^^^{ahora}^^1)"},
     {"campo": "OBR-27", "segmento": "OBR", "descripcion": "Fecha/hora programada"},
     {"campo": "OBR-31", "segmento": "OBR", "descripcion": "Motivo del estudio"},
 ]
@@ -95,7 +106,7 @@ CATALOGO_HL7 = [
 # Segmentos que lleva cada tipo de mensaje (define qué campos son mapeables).
 SEGMENTOS = {
     "ADT": ["MSH", "EVN", "PID", "PV1"],
-    "ORM": ["MSH", "PID", "ORC", "OBR"],
+    "ORM": ["MSH", "PID", "PV1", "ORC", "OBR"],
 }
 
 # Mapeos por defecto (plantillas precargadas), uno por tipo de mensaje.

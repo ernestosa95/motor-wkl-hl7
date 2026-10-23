@@ -36,7 +36,16 @@ def _dataset_a_payload(ds: Dataset) -> dict:
         "00080090": _v(ds, "ReferringPhysicianName"),
         "00080060": _v(ds, "Modality"),
         "00400002": "",
+        "00401001": _v(ds, "RequestedProcedureID"),
+        "00321064": "",
+        "00400009": "",
+        "00400007": "",
+        "00400003": "",
+        "00400001": "",
     }
+    cod_seq = getattr(ds, "RequestedProcedureCodeSequence", None)
+    if cod_seq and len(cod_seq) > 0:
+        payload["00321064"] = _v(cod_seq[0], "CodeValue")
     # Modality y fecha suelen venir dentro de ScheduledProcedureStepSequence
     sps_seq = getattr(ds, "ScheduledProcedureStepSequence", None)
     if sps_seq and len(sps_seq) > 0:
@@ -44,6 +53,10 @@ def _dataset_a_payload(ds: Dataset) -> dict:
         if not payload["00080060"]:
             payload["00080060"] = _v(sps, "Modality")
         payload["00400002"] = _v(sps, "ScheduledProcedureStepStartDate")
+        payload["00400009"] = _v(sps, "ScheduledProcedureStepID")
+        payload["00400007"] = _v(sps, "ScheduledProcedureStepDescription")
+        payload["00400003"] = _v(sps, "ScheduledProcedureStepStartTime")
+        payload["00400001"] = _v(sps, "ScheduledStationAETitle")
     return payload
 
 
@@ -57,10 +70,18 @@ def _construir_query(fecha_str: str) -> Dataset:
     ds.AccessionNumber = ""
     ds.RequestedProcedureDescription = ""
     ds.ReferringPhysicianName = ""
+    ds.RequestedProcedureID = ""
+    cod = Dataset()
+    cod.CodeValue = ""
+    cod.CodeMeaning = ""
+    ds.RequestedProcedureCodeSequence = [cod]
 
     sps = Dataset()
     sps.Modality = ""
     sps.ScheduledStationAETitle = ""
+    sps.ScheduledProcedureStepID = ""
+    sps.ScheduledProcedureStepDescription = ""
+    sps.ScheduledProcedureStepStartTime = ""
     sps.ScheduledProcedureStepStartDate = fecha_str  # clave de matching: HOY
     ds.ScheduledProcedureStepSequence = [sps]
     return ds
