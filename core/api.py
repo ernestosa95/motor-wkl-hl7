@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
 from core.auth import autenticar, crear_token, get_current_user, get_usuario_token, get_db, hash_password
-from core import config_repo, mapeo_repo, auditoria, equivalencias_repo, equipos_repo
+from core import config_repo, mapeo_repo, auditoria, equivalencias_repo, equipos_repo, configuracion_repo
 from core.conectividad import test_dicom_echo, test_mllp
 
 app = FastAPI(title="Motor HL7 API", version="1.6")
@@ -285,6 +285,12 @@ class PacienteIn(BaseModel):
     reenviar: bool = False
 
 
+class ImportarConfigIn(BaseModel):
+    configuracion: dict
+    secciones: Optional[List[str]] = None
+    aplicar: bool = False
+
+
 class EquipoIn(BaseModel):
     codigo_equipo: str
     descripcion_equipo: str = ""
@@ -340,3 +346,29 @@ def guardar_equipo(modalidad: str, body: EquipoIn, _user: Usuario = Depends(get_
 @app.post("/api/v1/equipos/restaurar")
 def restaurar_equipos(_user: Usuario = Depends(get_current_user)):
     return equipos_repo.restaurar()
+
+
+# ---------- Configuracion: exportar / importar (replicar en otro hospital, respaldo) ----------
+
+@app.get("/api/v1/configuracion/exportar")
+def exportar_configuracion(secciones: Optional[str] = None, hospital: str = "", comentario: str = "",
+                           _user: Usuario = Depends(get_current_user)):
+    """Archivo JSON con la configuracion. `secciones`: lista separada por comas
+    (mensajes, equipos, canales, equivalencias); por defecto las reutilizables entre hospitales."""
+    try:
+        lista = [x.strip() for x in secciones.split(",") if x.strip()] if secciones else None
+        return configuracion_repo.exportar(lista, hospital, comentario)
+    except configuracion_repo.ConfiguracionInvalida as e:
+        raise HTTPException(status_code=400, detail={"errores": e.errores})
+
+
+@app.post("/api/v1/configuracion/importar")
+def importar_configuracion(body: ImportarConfigIn, user: Usuario = Depends(get_current_user)):
+    """Con aplicar=false devuelve la vista previa (errores, avisos y diferencias) sin tocar nada;
+    con aplicar=true valida, guarda un respaldo de lo vigente y aplica."""
+    try:
+        if not body.aplicar:
+            return configuracion_repo.analizar(body.configuracion, body.secciones)
+        return configuracion_repo.aplicar(body.configuracion, body.secciones, usuario=getattr(user, "username", ""))
+    except configuracion_repo.ConfiguracionInvalida as e:
+        raise HTTPException(status_code=400, detail={"errores": e.errores})
