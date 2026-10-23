@@ -51,7 +51,7 @@ build.bat 1.0.1            # compila frontend + backend + instalador
 build.bat 1.0.1 /nofront   # reutiliza static\ (solo si NO cambió el frontend)
 ```
 
-Compilar **sin** `/nofront` siempre que haya cambios en `frontend-motor/`.
+Compilar **sin** `/nofront` siempre que haya cambios en `frontend-motor/`. `static\` ya **no está versionado** (lo genera el build): si `git pull` protesta por archivos modificados en `static\`, ejecutar `git checkout -- static` antes.
 
 ---
 
@@ -232,7 +232,7 @@ PV1|1|O|...
 
 ---
 
-## 8. Configuración del mensaje ORM (🔶 un error pendiente)
+## 8. Configuración del mensaje ORM (✅ funcionando)
 
 **Valores fijos (pestaña ORM):**
 
@@ -242,7 +242,7 @@ PV1|1|O|...
 | `PID-3` | `{00100020}^^^PK~{00100020}^DU^^CF` | Igual que el ADT |
 | `PID-5` | `{00100010:apellido}^^{00100010:nombres}^` | Igual que el ADT. **No copiar la plantilla de `PID-3` aquí** (error ya ocurrido, ver 10) |
 | `PV1-2` | `O` (por defecto) | Clase de paciente |
-| `PV1-3` | `INT` | **Ubicación de origen del paciente** (no es el equipo; ver sección 18) |
+| `PV1-3` | `INT` | **Ubicación de origen del paciente** (no es el equipo; ver sección 17) |
 | `ORC-1` | `SN` | Control de orden |
 | `ORC-2` | `{00080050}^SISGH` | Nº de orden + entidad que lo genera (la especificación usa `SISGH`) |
 | `ORC-4` | `{00080050}^SISGH` | `PlacerGroupNumber` + `PlacerGroupNumberIssuer` (mismo valor que `ORC-2`) |
@@ -333,6 +333,18 @@ Cada mensaje tiene su **propia tarea, sus propios reintentos y su propio estado*
 - Interfaz: el Monitor muestra por orden `ADT ✓ / ORM ✕`. La **auditoría** es una ventana ancha de dos columnas que cabe en una sola pantalla
   (estado, estado por mensaje y error a la izquierda; ADT y ORM con un segmento por línea a la derecha); se refresca sola mientras haya un mensaje en curso.
 
+### 9.1 Datos mínimos del paciente (validación y corrección)
+
+Antes de generar **cualquier** ADT u ORM se valida el paciente (`core/validacion_paciente.py`). Se retiene la orden con un motivo claro si:
+falta el documento, el apellido o el nombre de pila (o alguno es solo un número), la fecha de nacimiento falta, es inválida o futura, o el sexo
+falta o no es `F`/`M`/`O`/`U`. Los datos no cambian al reintentar, así que el mensaje pasa **directo a `ERROR_PERMANENTE`** (sin gastar reintentos).
+Se desactiva con `MOTORDICOM_VALIDAR_PACIENTE=0`.
+
+- **Corrección:** *Auditoría → Datos del paciente → Corregir* (apellido, nombres, nacimiento `DD/MM/AAAA` y sexo), con **Guardar** o **Guardar y reenviar**.
+  Se guarda en `payload_dicom_raw` y queda registro en `payload_dicom_raw._correcciones` (usuario, fecha, antes y después). No se edita el documento (es la clave del paciente).
+  API: `PUT /api/v1/trazabilidad/{id}/paciente`. Cada envío lee el paciente **de la base** en ese momento, así una corrección vale aunque la tarea ya estuviera encolada.
+- El sexo DICOM `O` se envía como `U` (el RIS acepta `F`, `M`, `U`).
+
 ---
 
 ## 10. Estudios (equivalencia texto → código) — pantalla *Estudios*
@@ -375,7 +387,7 @@ modalidad**, configurable desde la pantalla *Estudios → Equipo por modalidad*.
   Valores por defecto: RADIOLOGIA `DX`, RADIOGRAFIA CONTRASTADA `DX`, TOMOGRAFIA `CT`, RESONANCIA MAGNETICA `MR`, MAMOGRAFIA `MG`,
   ECOGRAFIA `US`, DENSITOMETRIA OSEA `BMD`, MEDICINA NUCLEAR `NM`; descripción `EQUIPO GENERICO <código>`; unidad de negocio vacía.
   Editables y restaurables (*Restaurar por defecto*).
-- **Uso (según la especificación del proveedor, sección 18):** `OBR-21` = `{codigo_equipo}` (recurso donde se realiza el estudio) y
+- **Uso (según la especificación del proveedor, sección 17):** `OBR-21` = `{codigo_equipo}` (recurso donde se realiza el estudio) y
   `OBR-18` = `{unidad_negocio}` (centro de costo / unidad que lo realiza). **No** se usa `PV1-3`, que es la ubicación de origen del paciente.
   Si se usa un marcador y la modalidad no tiene ese dato configurado, el ORM se retiene (`Sin equipo configurado ...`).
   La descripción del equipo es solo informativa: `OBR-21` y `OBR-18` llevan únicamente el código.
@@ -386,7 +398,7 @@ modalidad**, configurable desde la pantalla *Estudios → Equipo por modalidad*.
 
 ---
 
-## 11. 🔶 Pendiente: codificación del examen
+## 11. Codificación del examen (causa resuelta; queda 11.4)
 
 **Síntoma:** el motor ya envía `OBR-4` = `1^radiografía simple de tórax` (la equivalencia y la plantilla funcionan), y el RIS responde
 `C02 - Exam Code 1 not encoded`: **no encuentra un examen con código `1`**.
@@ -438,17 +450,24 @@ estudios en un solo texto** (`radiografía simple de tórax, radiografía simple
 - Darlos de alta en el RIS tal cual crea "estudios" con nombres truncados y combinados.
 - El motor envía **un solo código y un solo `OBR`** por orden, cuando debería haber **un `OBR` (y un código) por cada estudio**.
 
-Decisión pendiente: separar el texto por comas (un código por estudio; depende de que el texto no venga cortado) o resolverlo en el origen.
+**Datos medidos** (3636 órdenes, 522 textos distintos): 230 textos listan varios procedimientos (494 órdenes, 13,6 %); 162 de ellos están cortados a 64
+caracteres (337 órdenes, ~9 %). En 197 de los 230, cada parte ya existe como estudio individual.
+
+**Decisiones (sección 18):** las órdenes con varios estudios se **mantienen como examen combinado** (así se dieron de alta en el RIS: un ORM con un solo `OBR`).
+Para los **textos cortados** hay que **investigar** si el worklist trae el texto completo en otro campo:
+`python tools\consultar_worklist.py <host> <puerto> <AET destino> <AET propio> --combinadas` (pide además `RequestedProcedureComments`,
+`ImagingServiceRequestComments` y `CommentsOnTheScheduledProcedureStep`). **Riesgo mientras tanto:** si el texto se cortó, un estudio puede haber desaparecido
+sin que se note (por eso un texto de exactamente 64 caracteres es sospechoso).
 
 ---
 
 ## 12. Codificación de caracteres
 
 - El motor envía **UTF-8** (`emisor_mllp.py`) y declara `MSH-18` = `UTF-8`.
-- ✅ Se observó en el RIS texto roto (`radiografÃ­a`, `tÃ³rax`): bytes UTF-8 leídos como Windows-1252/ISO-8859-1. En ese momento el ORM
-  **salía sin `MSH-18`**. 🔶 Poniendo `MSH-18` = `UTF-8` en la pestaña ORM debería corregirse; **no verificado**.
-- Si persiste, revisar en Mirth la **codificación** del conector de entrada (MLLP, puerto 5556) y del conector de salida HTTP: deben ser `UTF-8`.
-- Afecta también a **nombres con tilde o ñ**. Probar con un paciente real que los tenga.
+- ✅ Se observó en el RIS texto roto (`radiografÃ­a`, `tÃ³rax`, y el apellido `CASTAÃ'O`): bytes UTF-8 leídos como Windows-1252/ISO-8859-1.
+- **Resuelto (2026-10-23):** se configuró la codificación `UTF-8` en Mirth y se **verificó** que un paciente con ñ llega bien al RIS.
+- **Pendiente:** los pacientes creados **antes** del cambio pueden tener el nombre corrupto; se identifican con la consulta de la sección 15 y se corrigen en el RIS.
+- Si volviera a aparecer: revisar que los conectores de Mirth (entrada MLLP puerto 5556 y salida HTTP al RIS) sigan en `UTF-8`.
 
 ---
 
@@ -508,41 +527,54 @@ Un mensaje **aceptado** no se reenvía. Solo en entornos de prueba se puede borr
 (`delete from registro_trazabilidad where accession_number = '...'`) para que la ingesta lo capture de nuevo;
 esto elimina su trazabilidad.
 
+**Respaldo de la base:** `installer\backup_db.ps1` (se instala en `C:\Program Files\MotorDICOM\installer`). Hace un `pg_dump` en
+`C:\ProgramData\MotorDICOM\backups` y conserva 14 días. Se programa con `powershell -File backup_db.ps1 -Programar` (tarea diaria a las 02:00, como administrador).
+Instrucciones de restauración en el encabezado del script. Guardar aparte `.env` y `.superpw`. 🔶 Escrito pero **no probado** en Windows.
+
+**Pacientes que pudieron crearse con el nombre corrupto** (anteriores al cambio a UTF-8 en Mirth): órdenes con caracteres no ASCII en el nombre.
+
+```sql
+select accession_number, patient_id, payload_dicom_raw->>'00100010' nombre, created_at
+from registro_trazabilidad
+where payload_dicom_raw->>'00100010' ~ '[^\x01-\x7F]'
+order by created_at;
+```
+
+**Pruebas automatizadas:** `pip install -r requirements-dev.txt` y `python -m pytest tests -q` (no necesitan PostgreSQL ni la cola: usan dobles en memoria).
+Cubren marcadores y componentes del serializador, separación de nombres, validación del paciente, clasificación de modalidades, CSV, estados por mensaje,
+reintentos independientes, reenvío y corrección de datos.
+
 **Logs:** `C:\ProgramData\MotorDICOM\logs\` (usar `Get-Content <archivo> -Tail 40`; no abrirlos enteros).
 
 ---
 
 ## 16. Pendientes y mejoras
 
-| Prioridad | Tema |
-|---|---|
-| **Alta** | Resolver las **colisiones de código** (314 estudios, sección 11.0): recodificar, dar de alta e importar |
-| **Alta** | Decidir el tratamiento de los **textos cortados y órdenes con varios estudios** (11.4) |
-| Alta | Verificar `MSH-18` / codificación UTF-8 con un paciente con tildes (sección 12) |
-| **Alta** | **Un procedimiento por mensaje ORM** (sección 18): las órdenes con varios estudios deben generar un ORM por estudio, con nº de orden único (`ORC-2`) y un `ORC-4` común |
-| **Alta** | Verificar que el `PatientID` del worklist es el **IDHC** de SISGH y no un DNI: el RIS espera `IDHC` como `PK`; usar el DNI como `PK` puede **duplicar pacientes** |
-| Media | Decidir `ORC-1`: `SN` (admisión directa, aparece en la lista del técnico) o `NW` + `ORC-5`=`SC` (procedimiento agendado con cita) |
-| Media | Sexo DICOM `O` → HL7 `U` (el RIS acepta `F`, `M`, `U`) |
-| Media | Flujos **RIS → HIS** no implementados: ORM de estado (`XO`/`CM`/`CA`) y ORU de resultados |
-| Baja | Confirmar `MSH-4` (`ARP03`): la especificación lista `PAMI1` / `MILSTEIN` |
-| Media | Abrir el **PR** de `build/script-windows` / `feat/adt-mirth` hacia `main` |
-| Media | Quitar `static\` del control de versiones (es salida de build; genera cambios y conflictos en cada compilación) |
-| Media | **Reprocesar en masa** los ORM con error (hoy es de a una orden) |
-| Media | Validar **datos mínimos del paciente** (apellido y nombre) antes de enviar, reteniendo y avisando si faltan |
-| Media | Decidir si el **ORM debe esperar** a que el ADT sea aceptado |
-| Media | Regla de **apellidos compuestos** (la regla actual toma solo la primera palabra) |
-| Baja | Importar el catálogo del RIS y elegir el código con un buscador / sugerencias por similitud |
-| Baja | `ORC-12` fijo en `SIN DERIVADOR`: usar el médico derivante del worklist si viene |
-| Baja | `PV1-19` (nº de visita) y códigos de servicio/equipo reales (`PV1-3`, `ORC-17`) si el RIS los exige |
+Estado tras las decisiones de la sección 18. **Resuelto** en esta etapa: validación de datos del paciente, corrección manual, reenvío de órdenes,
+auditoría en una sola pantalla, sexo `O` → `U`, respaldo de la base, pruebas automatizadas y `static\` fuera del repositorio.
+
+| Prioridad | Tema | Notas |
+|---|---|---|
+| **Alta** | **Textos cortados a 64 caracteres** (162 textos, 337 órdenes, ~9 %) | Correr `tools/consultar_worklist.py --combinadas` y ver si el worklist trae el texto completo en `RequestedProcedureComments`, `ImagingServiceRequestComments` o `CommentsOnTheScheduledProcedureStep`. Hasta entonces se envían como hoy; riesgo: un estudio omitido pasa desapercibido |
+| **Alta** | **Pacientes creados antes del cambio a UTF-8** con el nombre corrupto | Identificarlos con la consulta de la sección 15 y corregirlos en el RIS (el motor aún no genera `A08`; reenviar un ADT `A04` puede o no actualizarlos: no verificado) |
+| **Alta** | `PK` = DNI (decisión 18) | Riesgo de **pacientes duplicados** si SISGH envía el IDHC real como `PK`. Revisar antes de operar con el origen definitivo |
+| **Alta** | **Pasar de pruebas a operación**: el RIS destino es producción todavía sin uso | Antes de operar: limpiar los pacientes y órdenes de prueba, cambiar `admin`/`admin123`, programar el respaldo y confirmar `MSH-4` |
+| Media | Equipos del RIS de las demás modalidades | `ExternalCode` de cada equipo y vínculos con la unidad `CD1` (sección 8.2). Densitometría y medicina nuclear no tienen equipo: su ORM queda retenido |
+| Media | Flujos **RIS → HIS** sin implementar | ORM de estado (`XO`/`CM`/`CA`) y ORU de resultados |
+| Media | Mensaje `A08` (actualización de paciente) | Para corregir datos de pacientes ya creados |
+| Baja | Apellidos compuestos | Decisión vigente: primera palabra = apellido; se corrige a mano desde la auditoría |
+| Baja | `ORC-12` fijo en `SIN DERIVADOR` | Usar el médico derivante del worklist si algún día viene (hoy llega vacío) |
+| Baja | Sugerencias de código por similitud al cargar equivalencias | Si el catálogo del RIS crece |
+| Baja | `PV1-19` (nº de visita) | No exigido en las pruebas |
 
 ---
 
-## 18. Especificación del proveedor del RIS (`Relevamiento_integracion.xlsx`)
+## 17. Especificación del proveedor del RIS (`Relevamiento_integracion.xlsx`)
 
 Documento recibido el 2026-10-23 (hojas por segmento y mensaje). Resume lo que **exige el RIS** y cómo se refleja en el motor.
 Referencias a hojas entre corchetes. La especificación habla de un HIS llamado *GOMEDISYS/SISGH* y usa ejemplos de otra institución (`PAMI1`, `MILSTEIN`).
 
-### 18.1 Reglas generales
+### 17.1 Reglas generales
 - **Cada ORM contiene una sola orden (`ORC`) y un solo procedimiento (`OBR`)** [Order Management; PV1: "UN PROCEDIMIENTO POR MENSAJE"].
   Una orden con varios estudios debe viajar como **varios ORM**. Hoy el motor envía un ORM por orden (sección 11.4).
 - Segmentos obligatorios del ORM: `MSH`, `PID`, `PV1`, `ORC`, `OBR`. Opcionales: `ZDS` (Study Instance UID) y `OBX`.
@@ -551,18 +583,18 @@ Referencias a hojas entre corchetes. La especificación habla de un HIS llamado 
 - `ACK`: `MSA-1` = `AA` (correcto), `AE` (mensaje no gestionado), `AR` (error de parseo o procesamiento); `MSA-2` = `MSH-10` del mensaje.
 - `ADT`: `A04` y `A08` son equivalentes para crear pacientes; `A08` también actualiza datos; `A40`/`A34` unifican pacientes. La **creación de pacientes también ocurre por mensajería ORM**.
 
-### 18.2 `PID`
+### 17.2 `PID`
 - `PID-3` (obligatorio, repetible): `IDHC^^^PK~NUMERO_DOCUMENTO^TIPO_DOC^^CF~NUMERO_AFILIADO`.
   `PK` = **ID interno autoincremental de SISGH (IDHC)**; `CF` = documento (tipo en el componente 2: `DU` documento único, `DE` extranjero, `PA` pasaporte, `LC`, `LE`, `RN` recién nacido).
 - `PID-5`: `APELLIDO^DOBLE APELLIDO^NOMBRE1^NOMBRE2...` (coincide con lo implementado).
 - `PID-7` `AAAAMMDD`; `PID-8` `F`/`M`/`U`. `PID-11` domicilio, `PID-13` teléfono, `PID-18` (`NUMERO_DOCUMENTO^^^DU`) y `PID-19` (afiliado) son opcionales y hoy no se envían.
 
-### 18.3 `PV1`
+### 17.3 `PV1`
 - `PV1-2` (clase de paciente) **obligatorio** en las órdenes: `O` ambulatorio, `I` internado, `E` urgencia/guardia.
 - **`PV1-3`: código de la ubicación de donde viene el paciente** (configurado en el HIS), con la descripción en `PV1-3-9`. **No es el equipo.**
 - `PV1-19` (nº de visita): "número de orden de trabajo", entero; llega vacío en el ADT y con valor en el ORM. En las pruebas no fue exigido.
 
-### 18.4 `ORC`
+### 17.4 `ORC`
 | Campo | Qué pide el RIS |
 |---|---|
 | `ORC-1` / `ORC-5` | `NW` + `SC` (nueva orden con cita, HIS → RIS) o `SN` + vacío (admisión directa, aparece en la lista del técnico). También `XO`, `CM`, `CA` en el sentido RIS → HIS |
@@ -574,7 +606,7 @@ Referencias a hojas entre corchetes. La especificación habla de un HIS llamado 
 | `ORC-12` | Médico solicitante: `id^apellido^nombre` |
 | `ORC-17` | **Procedencia** (origen del paciente): `código^descripción`. Obligatorio |
 
-### 18.5 `OBR`
+### 17.5 `OBR`
 | Campo | Qué pide el RIS |
 |---|---|
 | `OBR-2` | Igual que `ORC-2` (`<nº>^SISGH`) |
@@ -585,18 +617,36 @@ Referencias a hojas entre corchetes. La especificación habla de un HIS llamado 
 | `OBR-27` | `1^^^AAAAMMDDhhmmss^^1`: fecha/hora de la cita, o de creación de la orden si no tiene cita. `OBR-27.6` = prioridad |
 | `OBR-13` / `OBR-31` | Información clínica / motivo del estudio (opcionales) |
 
-### 18.6 Canales de la especificación
+### 17.6 Canales de la especificación
 `ADT` y `ORM` HIS → RIS por TCP (puertos 2200 y 2201), `ORM` RIS → HIS (2202, cambios de estado) y `ORU` RIS → HIS (2203, resultados).
 En este entorno el motor entrega a Mirth (`172.31.3.150:5556`); los flujos RIS → HIS (estados y resultados) **no están implementados**.
 
-### 18.7 Correcciones que surgieron de esta especificación
+### 17.7 Correcciones que surgieron de esta especificación
 1. Equipo y unidad de negocio van en **`OBR-21` y `OBR-18`**, no en `PV1-3` (que era una suposición errónea basada en el ORM de ejemplo).
 2. La fecha/hora de la cita va en `ORC-7.4` y `OBR-27.4` (el ejemplo del RIS tenía el valor en `OBR-25`). Se agregó el marcador `{cita}` (fecha y hora programadas del worklist; si no hay fecha, usa la del mensaje).
 3. La entidad emisora del número de orden es `SISGH` (no `HIS`).
 
 ---
 
-## 17. Referencia de código
+## 18. Decisiones registradas (2026-10-23)
+
+| Tema | Decisión | Consecuencia |
+|---|---|---|
+| `PatientID` del worklist | Es un **DNI** y se mantiene como `PK` | El RIS espera el IDHC de SISGH como `PK`: posible duplicación de pacientes (ver 16) |
+| `ORC-1` | Se mantiene **`SN`** (admisión directa) | La orden aparece de inmediato en la lista de ejecución del técnico |
+| ADT y ORM | Siguen **independientes** | La especificación dice que los pacientes también se crean por el ORM (lleva el `PID` completo) |
+| Datos mínimos del paciente | **Retener y avisar** (9.1) | Una orden con datos incompletos no se envía; se corrige y se reenvía desde la auditoría |
+| Corrección de datos | **Editor en el motor** (auditoría → *Datos del paciente*) | Queda registrado quién, cuándo, antes y después |
+| Nombres | Primera palabra = **apellido** | Falla con apellidos compuestos; se corrige a mano |
+| Entorno | El RIS al que se envía es **producción, todavía sin uso** | Los datos creados son reales; ver lista previa a operar en 16 |
+| Órdenes con varios estudios | Se mantienen como **examen combinado** (como se dio de alta en el RIS) | Un ORM con un solo `OBR`; no se separa por estudio |
+| Textos cortados a 64 caracteres | **Investigar primero** si el worklist trae el texto completo | Mientras tanto se envían como hoy |
+| Codificación de caracteres | Mirth ya en UTF-8; **verificado**: la ñ llega bien | Solo quedan por corregir los pacientes creados antes del cambio |
+| Reproceso en masa | **Descartado** por ahora | Se usa *Reenviar* por orden |
+
+---
+
+## 19. Referencia de código
 
 | Archivo | Responsabilidad |
 |---|---|

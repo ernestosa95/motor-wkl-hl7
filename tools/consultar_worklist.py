@@ -33,7 +33,10 @@ def construir_query(fecha):
     for attr in ("PatientName", "PatientID", "PatientBirthDate", "PatientSex", "AccessionNumber",
                  "ReferringPhysicianName", "RequestedProcedureID", "RequestedProcedureDescription",
                  "RequestedProcedurePriority", "StudyInstanceUID", "AdmissionID",
-                 "ReasonForTheRequestedProcedure"):
+                 "ReasonForTheRequestedProcedure",
+                 # Campos de texto largo: pueden traer el texto completo cuando la descripcion
+                 # (LO, maximo 64 caracteres) llega cortada
+                 "RequestedProcedureComments", "ImagingServiceRequestComments"):
         setattr(ds, attr, "")
     cod = Dataset()
     cod.CodeValue = ""
@@ -45,7 +48,7 @@ def construir_query(fecha):
     for attr in ("Modality", "ScheduledStationAETitle", "ScheduledStationName",
                  "ScheduledProcedureStepID", "ScheduledProcedureStepDescription",
                  "ScheduledProcedureStepStartTime", "ScheduledProcedureStepLocation",
-                 "ScheduledPerformingPhysicianName"):
+                 "ScheduledPerformingPhysicianName", "CommentsOnTheScheduledProcedureStep"):
         setattr(sps, attr, "")
     sps.ScheduledProcedureStepStartDate = fecha
     prot = Dataset()
