@@ -150,6 +150,10 @@ function Register-Svc([string]$name, [string]$arg) {
     & $Nssm set $name AppStdout (Join-Path $Logs "$arg.log") | Out-Null
     & $Nssm set $name AppStderr (Join-Path $Logs "$arg.log") | Out-Null
     & $Nssm set $name Start SERVICE_AUTO_START | Out-Null
+    # Rotar el stdout/stderr capturado (sino crece sin limite): 10 MB, en linea
+    & $Nssm set $name AppRotateFiles 1 | Out-Null
+    & $Nssm set $name AppRotateOnline 1 | Out-Null
+    & $Nssm set $name AppRotateBytes 10485760 | Out-Null
     & $Nssm set $name DependOnService "$PgSvcName" | Out-Null
     & $Nssm set $name AppEnvironmentExtra "MOTORDICOM_DATA=$DataRoot" | Out-Null
 }
