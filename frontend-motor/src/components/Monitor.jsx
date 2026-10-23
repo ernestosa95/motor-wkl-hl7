@@ -24,6 +24,26 @@ function Pill({ estado }) {
   );
 }
 
+// Estado de cada mensaje (ADT / ORM) por separado.
+const MSG_STYLE = {
+  ENVIADO:          'bg-teal-50 text-teal-700 ring-teal-200',
+  PENDIENTE:        'bg-amber-50 text-amber-700 ring-amber-200',
+  ERROR_PERMANENTE: 'bg-rose-50 text-rose-700 ring-rose-200',
+};
+const MSG_ICONO = { ENVIADO: '✓', PENDIENTE: '…', ERROR_PERMANENTE: '✕' };
+
+function MsgChip({ tipo, estado }) {
+  const style = MSG_STYLE[estado] || 'bg-zinc-50 text-zinc-400 ring-zinc-200';
+  return (
+    <span
+      title={`${tipo}: ${estado || 'sin generar'}`}
+      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${style}`}
+    >
+      {tipo} {MSG_ICONO[estado] || '–'}
+    </span>
+  );
+}
+
 function StatCard({ label, valor, tono }) {
   const color = { zinc: 'text-zinc-900', blue: 'text-blue-600', teal: 'text-teal-600', rose: 'text-rose-600' }[tono];
   return (
@@ -148,20 +168,22 @@ export default function Monitor() {
                   {ESTADOS.map((e) => <option key={e} value={e}>{e === '' ? 'Todos' : e}</option>)}
                 </select>
               </th>
+              <th className="px-5 py-3 font-medium">Mensajes</th>
               <th className="px-5 py-3 font-medium">Fecha</th>
               <th className="px-5 py-3 font-medium text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-50">
             {cargando ? (
-              <tr><td colSpan={6} className="px-5 py-12 text-center text-zinc-400"><span className="animate-pulse">Sincronizando…</span></td></tr>
+              <tr><td colSpan={7} className="px-5 py-12 text-center text-zinc-400"><span className="animate-pulse">Sincronizando…</span></td></tr>
             ) : filtradas.length === 0 ? (
-              <tr><td colSpan={6} className="px-5 py-12 text-center text-zinc-400">
+              <tr><td colSpan={7} className="px-5 py-12 text-center text-zinc-400">
                 {ordenes.length === 0 ? 'Sin órdenes todavía. El SCU consultará la worklist en el próximo ciclo.' : 'Ninguna orden coincide con los filtros.'}
               </td></tr>
             ) : (
               filtradas.map((o) => {
-                const esError = o.estado.startsWith('ERROR');
+                const reprocesable = Object.values(o.mensajes || {}).includes('ERROR_PERMANENTE')
+                  || o.estado === 'ERROR_PERMANENTE';
                 return (
                   <tr key={o.id} className="hover:bg-zinc-50/60 transition-colors">
                     <td className="px-5 py-3 font-mono text-[13px] text-zinc-900">{o.accession}</td>
@@ -170,14 +192,20 @@ export default function Monitor() {
                       <span className="inline-flex rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs text-zinc-600">{o.modalidad}</span>
                     </td>
                     <td className="px-5 py-3"><Pill estado={o.estado} /></td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-1.5">
+                        <MsgChip tipo="ADT" estado={o.mensajes?.adt} />
+                        <MsgChip tipo="ORM" estado={o.mensajes?.orm} />
+                      </div>
+                    </td>
                     <td className="px-5 py-3 font-mono text-xs text-zinc-400">{o.fecha}</td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-2">
-                        {esError && (
+                        {reprocesable && (
                           <button
                             onClick={() => reprocesar(o)}
                             disabled={!!reprocesando[o.id]}
-                            title="Reintentar el envío de esta orden"
+                            title="Reintentar solo los mensajes que fallaron (el aceptado no se reenvía)"
                             className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50 transition-colors"
                           >
                             <RotateCcw size={14} className={reprocesando[o.id] ? 'animate-spin' : ''} />

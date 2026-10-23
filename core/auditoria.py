@@ -110,17 +110,110 @@ def existe_accession(accession_number: str) -> bool:
         db.close()
 
 
-def reprocesar(correlation_id: str):
-    """
-    Re-despacha una orden fallida al broker sin crear un registro nuevo.
+TIPOS_MENSAJE = ("adt", "orm")
 
-    Reutiliza el payload_dicom_raw ya guardado y el mismo correlation_id, para
-    no chocar con la deduplicacion ni duplicar filas en el monitor. El HL7 ya
-    generado se conserva: el broker reenvia solo lo que no fue aceptado.
-    Devuelve True si se re-encolo; False si el registro no existe o no tiene payload.
+
+def estado_orden(envios: dict) -> EstadoMensaje:
+    """Estado de la orden derivado del estado de cada mensaje (ADT y ORM por separado).
+
+    COMPLETADO: ambos aceptados. ERROR_PERMANENTE: algun mensaje agoto sus reintentos
+    (requiere Reprocesar). ERROR_EMISION: algun mensaje fallo y tiene un reintento
+    automatico en cola. TRANSFORMADO: en curso, sin errores.
+    """
+    envios = envios or {}
+    por_tipo = [envios.get(t) or {} for t in TIPOS_MENSAJE]
+    if all(e.get("ok") for e in por_tipo):
+        return EstadoMensaje.COMPLETADO
+    if any(e.get("estado") == "ERROR_PERMANENTE" for e in por_tipo):
+        return EstadoMensaje.ERROR_PERMANENTE
+    if any(e.get("ultimo_error") for e in por_tipo):
+        return EstadoMensaje.ERROR_EMISION
+    return EstadoMensaje.TRANSFORMADO
+
+
+def estado_mensaje(envio) -> str:
+    """ENVIADO | PENDIENTE | ERROR_PERMANENTE | None (aun sin generar)."""
+    if not envio:
+        return None
+    if envio.get("ok"):
+        return "ENVIADO"
+    return envio.get("estado") or "PENDIENTE"
+
+
+def resumen_envios(payload_hl7) -> dict:
+    envios = (payload_hl7 or {}).get("envios") or {}
+    return {t: estado_mensaje(envios.get(t)) for t in TIPOS_MENSAJE}
+
+
+def actualizar_envio(correlation_id, tipo: str, envio: dict = None, mensaje: str = None,
+                     preservar_intentos: bool = True):
+    """Actualiza UN mensaje (adt|orm) de la orden sin pisar al otro.
+
+    Bloquea la fila (SELECT ... FOR UPDATE): ADT y ORM se envian en tareas
+    paralelas y cada una modifica el mismo JSON. Recalcula el estado de la orden,
+    el contador de reintentos y el detalle de error a partir de ambos mensajes.
+    `envio` se mezcla con el registro actual del mensaje; `mensaje` es el HL7 generado.
+    """
+    db = SessionLocal()
+    try:
+        registro = db.query(RegistroTrazabilidad).filter(
+            RegistroTrazabilidad.correlation_id == correlation_id
+        ).with_for_update().first()
+        if registro is None:
+            return None
+        payload = dict(registro.payload_hl7 or {})
+        envios = dict(payload.get("envios") or {})
+        if mensaje is not None:
+            payload[tipo] = mensaje
+        if envio is not None:
+            actual = dict(envios.get(tipo) or {})
+            actual.update(envio)
+            envios[tipo] = actual
+        payload["envios"] = envios
+        registro.payload_hl7 = payload
+        flag_modified(registro, "payload_hl7")
+
+        registro.estado = estado_orden(envios)
+        registro.reintentos = sum(int((envios.get(t) or {}).get("intentos_fallidos", 0))
+                                  for t in TIPOS_MENSAJE)
+        errores = {t.upper(): (envios.get(t) or {}).get("ultimo_error")
+                   for t in TIPOS_MENSAJE if (envios.get(t) or {}).get("ultimo_error")}
+        if errores:
+            registro.detalles_error = {
+                "mensaje": " | ".join("%s: %s" % (k, v) for k, v in errores.items()),
+                "cuando": max((envios.get(t.lower()) or {}).get("ultimo_intento") or ""
+                              for t in errores),
+                "pendientes": list(errores),
+            }
+        else:
+            registro.detalles_error = None
+        db.commit()
+        print(f"[*] Auditoría: {correlation_id} {tipo.upper()} -> {estado_mensaje(envios.get(tipo))}"
+              f" | orden {registro.estado.name}")
+        return registro.estado
+    except Exception as e:
+        db.rollback()
+        print(f"[!] Error al actualizar envio {tipo}: {e}")
+        raise
+    finally:
+        db.close()
+
+
+def reprocesar(correlation_id: str, tipo: str = None) -> list:
+    """Re-encola los mensajes (ADT/ORM) que agotaron sus reintentos, sin tocar el otro.
+
+    Un mensaje es reprocesable solo si esta en ERROR_PERMANENTE (si tiene un
+    reintento automatico en cola, reprocesar duplicaria el envio). Se reutiliza
+    payload_dicom_raw y el mismo correlation_id. El HL7 se regenera con la
+    configuracion vigente. `tipo` ('adt' | 'orm') limita a un solo mensaje.
+    Devuelve la lista de tipos re-encolados (vacia si no habia nada reprocesable).
     """
     # Import local para evitar import circular (broker -> auditoria -> broker)
-    from core.broker import tarea_procesar_orden
+    from core.broker import tarea_enviar_mensaje
+
+    tipos = [tipo.lower()] if tipo else list(TIPOS_MENSAJE)
+    if any(t not in TIPOS_MENSAJE for t in tipos):
+        return []
 
     db = SessionLocal()
     try:
@@ -128,21 +221,30 @@ def reprocesar(correlation_id: str):
             RegistroTrazabilidad.correlation_id == correlation_id
         ).first()
         if registro is None or not registro.payload_dicom_raw:
-            return False
-
+            return []
         payload = registro.payload_dicom_raw
-        # Reset a INGRESADO para reflejar el reintento en el monitor
-        registro.estado = EstadoMensaje.INGRESADO
-        registro.detalles_error = None
-        db.commit()
-        print(f"[*] Auditoría: reprocesando {correlation_id}")
+        envios = (registro.payload_hl7 or {}).get("envios") or {}
+        legacy_fallido = registro.estado == EstadoMensaje.ERROR_PERMANENTE
+        elegibles = []
+        for t in tipos:
+            e = envios.get(t) or {}
+            if e.get("ok"):
+                continue
+            # Registros anteriores al desacople no tienen "estado" por mensaje.
+            if e.get("estado") == "ERROR_PERMANENTE" or (not e.get("estado") and legacy_fallido):
+                elegibles.append(t)
+        cid = registro.correlation_id
     except Exception as e:
         db.rollback()
         print(f"[!] Error al preparar reproceso: {e}")
-        return False
+        return []
     finally:
         db.close()
 
+    for t in elegibles:
+        actualizar_envio(cid, t, {"estado": "PENDIENTE", "ultimo_error": None})
+        print(f"[*] Auditoría: reprocesando {correlation_id} ({t.upper()})")
     # Re-despacho fuera de la sesion de DB
-    tarea_procesar_orden(registro.correlation_id, payload)
-    return True
+    for t in elegibles:
+        tarea_enviar_mensaje(cid, payload, t)
+    return elegibles

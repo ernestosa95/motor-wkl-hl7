@@ -5,9 +5,8 @@ import datetime
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
 from core.serializador_hl7 import EstudioSinCodigo
-from core.auditoria import actualizar_estado, guardar_hl7, obtener_hl7, registrar_fallo
+from core.auditoria import actualizar_envio, obtener_hl7
 from core.emisor_mllp import enviar_mensaje_mllp, control_id, ErrorEmision
-from core.models import EstadoMensaje
 from core import config_repo
 
 log = logging.getLogger(__name__)
@@ -49,106 +48,80 @@ def _destino(clave):
     raise ErrorEmision(f"El canal '{clave}' no tiene host/puerto configurado.")
 
 
-def _obtener_o_transformar(correlation_id, payload_dicom):
-    """Genera los HL7 pendientes con la configuracion de mapeo VIGENTE.
+def _generar(correlation_id, payload_dicom, tipo):
+    """HL7 de UN mensaje con la configuracion VIGENTE (mapeo, valores fijos, equivalencias).
 
-    En cada intento (automatico o 'Reprocesar') se regeneran ADT/ORM que aun no
-    fueron aceptados, asi un cambio de mapeo, de valores fijos o de equivalencias
-    de estudio se aplica al reenviar. Se conserva el MSH-10 original, para que el
-    destino pueda detectar duplicados. Lo ya aceptado (envios[tipo].ok) no se toca.
-
-    Devuelve (mensajes, errores). Un estudio sin equivalencia de codigo solo
-    bloquea ese mensaje (ej. el ORM): el otro se envia igual.
+    Se regenera en cada intento, asi un cambio de configuracion se aplica al reenviar.
+    Se conserva el MSH-10 del mensaje previo, para que el destino detecte duplicados.
+    Lanza EstudioSinCodigo si el estudio no tiene equivalencia cargada.
     """
-    mensajes = obtener_hl7(correlation_id) or {}
-    envios = mensajes.setdefault("envios", {})
-    primera_vez = not (mensajes.get("adt") or mensajes.get("orm"))
-    errores = {}
-
-    for tipo in ("adt", "orm"):
-        if envios.get(tipo, {}).get("ok") and mensajes.get(tipo):
-            continue
-        previo = mensajes.get(tipo)
-        try:
-            mensajes[tipo] = procesar_transformacion(
-                payload_dicom, tipo.upper(),
-                msg_id=(control_id(previo) or None) if previo else None,
-            )
-        except EstudioSinCodigo as e:
-            mensajes.pop(tipo, None)
-            errores[tipo.upper()] = str(e)
-
-    guardar_hl7(correlation_id, mensajes)
-    if primera_vez and (mensajes.get("adt") or mensajes.get("orm")):
-        actualizar_estado(correlation_id, EstadoMensaje.TRANSFORMADO)
-    return mensajes, errores
-
-
-def _emitir(correlation_id, mensajes, tipo, clave_canal, etiqueta):
-    """Emite un mensaje a su destino. Devuelve None si salio OK, o el error.
-
-    No relanza: ADT y ORM son independientes, un fallo en uno no aborta el otro.
-    """
-    try:
-        host, puerto = _destino(clave_canal)
-        ack = enviar_mensaje_mllp(mensajes[tipo], host=host, puerto=puerto)
-    except Exception as e:
-        log.error("[%s] fallo de emision para %s: %s", etiqueta, correlation_id, e)
-        return str(e)
-
-    mensajes["envios"][tipo] = {"ok": True, "destino": f"{host}:{puerto}",
-                                "cuando": _ahora(), "ack": ack}
-    guardar_hl7(correlation_id, mensajes)
-    log.info("[%s] aceptado (ACK) para %s -> %s:%s", etiqueta, correlation_id, host, puerto)
-    return None
+    previo = (obtener_hl7(correlation_id) or {}).get(tipo)
+    return procesar_transformacion(
+        payload_dicom, tipo.upper(),
+        msg_id=(control_id(previo) or None) if previo else None,
+    )
 
 
 @huey.task(retries=REINTENTOS, retry_delay=RETRY_DELAY, context=True)
-def tarea_procesar_orden(correlation_id, payload_dicom, task=None):
-    """Transforma a ADT + ORM, guarda el HL7 y despacha cada uno a su destino.
+def tarea_enviar_mensaje(correlation_id, payload_dicom, tipo, task=None):
+    """Genera y envia UN mensaje (tipo 'adt' | 'orm') a su destino.
 
-    ADT primero, ORM despues, de forma independiente. Cada envio aceptado queda
-    registrado en payload_hl7["envios"]; si falta alguno, la tarea se reintenta
-    y solo se reenvia lo pendiente. COMPLETADO unicamente con ADT y ORM aceptados.
+    Cada mensaje es independiente de su par: tiene su propia tarea, sus propios
+    reintentos y su propio estado en payload_hl7["envios"][tipo]. Que el ORM falle
+    no afecta al ADT ya aceptado (ni al reves). El estado de la orden se deriva de
+    ambos (auditoria.estado_orden).
     """
     quedan = task.retries if task is not None else 0
+    _, clave_canal, etiqueta = next(d for d in DESTINOS if d[0] == tipo)
 
+    previo = ((obtener_hl7(correlation_id) or {}).get("envios") or {}).get(tipo) or {}
+    if previo.get("ok"):
+        return  # ya aceptado: no se reenvia
+
+    error, reintentable = None, True
     try:
-        mensajes, errores_transf = _obtener_o_transformar(correlation_id, payload_dicom)
+        mensaje = _generar(correlation_id, payload_dicom, tipo)
+        actualizar_envio(correlation_id, tipo, {"estado": "PENDIENTE"}, mensaje=mensaje)
+        host, puerto = _destino(clave_canal)
+        ack = enviar_mensaje_mllp(mensaje, host=host, puerto=puerto)
+    except EstudioSinCodigo as e:
+        error = str(e)  # se resuelve cargando la equivalencia: los reintentos la recogen
+    except ErrorEmision as e:
+        error = str(e)
     except Exception as e:
-        # Fallo de transformacion (mapeo mal, payload invalido): no es de red,
-        # reintentar no lo arregla.
-        log.exception("Fallo de transformacion para %s", correlation_id)
-        registrar_fallo(correlation_id, final=True, detalle={
-            "mensaje": f"Fallo de transformacion: {e}", "cuando": _ahora(), "etapa": "transformacion",
+        # Fallo de transformacion o de otro tipo (mapeo mal, payload invalido): no es
+        # de red, reintentar no lo arregla.
+        log.exception("[%s] fallo inesperado para %s", etiqueta, correlation_id)
+        error, reintentable = f"Fallo de transformacion: {e}", False
+
+    if error is None:
+        actualizar_envio(correlation_id, tipo, {
+            "ok": True, "estado": "ENVIADO", "destino": f"{host}:{puerto}",
+            "cuando": _ahora(), "ack": ack, "ultimo_error": None,
         })
+        log.info("[%s] aceptado (ACK) para %s -> %s:%s", etiqueta, correlation_id, host, puerto)
         return
 
-    errores = {}
-    for tipo, clave_canal, etiqueta in DESTINOS:
-        if mensajes["envios"].get(tipo, {}).get("ok"):
-            continue  # ya aceptado en un intento anterior: no se reenvia
-        if etiqueta in errores_transf:
-            errores[etiqueta] = errores_transf[etiqueta]  # sin codigo de estudio: no se emite
-            continue
-        error = _emitir(correlation_id, mensajes, tipo, clave_canal, etiqueta)
-        if error:
-            errores[etiqueta] = error
-
-    if not errores:
-        actualizar_estado(correlation_id, EstadoMensaje.COMPLETADO)
-        log.info("Orden %s COMPLETADA (ADT+ORM aceptados).", correlation_id)
-        return
-
-    final = quedan == 0
-    registrar_fallo(correlation_id, final=final, detalle={
-        "mensaje": " | ".join(f"{k}: {v}" for k, v in errores.items()),
-        "cuando": _ahora(),
-        "pendientes": list(errores),
-        "reintentos_restantes": quedan,
+    final = quedan == 0 or not reintentable
+    log.warning("[%s] %s para %s (quedan %s reintentos)", etiqueta, error, correlation_id, quedan)
+    actual = ((obtener_hl7(correlation_id) or {}).get("envios") or {}).get(tipo) or {}
+    actualizar_envio(correlation_id, tipo, {
+        "ok": False,
+        "estado": "ERROR_PERMANENTE" if final else "PENDIENTE",
+        "ultimo_error": error,
+        "ultimo_intento": _ahora(),
+        "intentos_fallidos": int(actual.get("intentos_fallidos", 0)) + 1,
     })
-    log.warning("Orden %s con envios pendientes %s (quedan %s reintentos).",
-                correlation_id, list(errores), quedan)
     if not final:
         # Huey la reencola despues de RETRY_DELAY segundos.
-        raise ErrorEmision(f"Envios pendientes: {', '.join(errores)}")
+        raise ErrorEmision(f"{etiqueta} pendiente: {error}")
+
+
+def tarea_procesar_orden(correlation_id, payload_dicom):
+    """Encola el envio de ADT y de ORM como tareas independientes.
+
+    ADT primero (el paciente debe existir antes que la orden), pero ninguno espera
+    al otro ni comparte reintentos con el.
+    """
+    for tipo, _, _ in DESTINOS:
+        tarea_enviar_mensaje(correlation_id, payload_dicom, tipo)

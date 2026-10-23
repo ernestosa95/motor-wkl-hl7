@@ -80,6 +80,7 @@ def obtener_registros(db: Session = Depends(get_db), _user: Usuario = Depends(ge
             "estado": r.estado.name,
             "fecha": r.created_at.strftime("%Y-%m-%d %H:%M:%S"),
             "tiene_hl7": bool(r.payload_hl7),
+            "mensajes": auditoria.resumen_envios(r.payload_hl7),
         }
         for r in registros
     ]
@@ -121,28 +122,38 @@ def auditoria_orden(correlation_id: str, db: Session = Depends(get_db),
         "payload_dicom": r.payload_dicom_raw or {},
         "hl7": r.payload_hl7 or {},
         "detalles_error": r.detalles_error or None,
+        "mensajes": {
+            t: {**(e or {}), "estado": auditoria.estado_mensaje(e)}
+            for t, e in (((r.payload_hl7 or {}).get("envios")) or {}).items()
+        },
     }
 
 
 @app.post("/api/v1/trazabilidad/{correlation_id}/reprocesar")
-def reprocesar_orden(correlation_id: str, db: Session = Depends(get_db),
+def reprocesar_orden(correlation_id: str, tipo: Optional[str] = None,
+                     db: Session = Depends(get_db),
                      _user: Usuario = Depends(get_current_user)):
+    """Reprocesa los mensajes en error permanente (ADT, ORM o ambos con tipo vacio)."""
     r = db.query(RegistroTrazabilidad).filter(
         RegistroTrazabilidad.correlation_id == correlation_id
     ).first()
     if r is None:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
-    if r.estado == EstadoMensaje.ERROR_EMISION:
-        # Ya hay un reintento automatico en cola; reprocesar ahora duplicaria el envio.
-        raise HTTPException(status_code=409,
-                            detail="Hay un reintento automatico pendiente para esta orden")
+    if tipo is not None and tipo.lower() not in ("adt", "orm"):
+        raise HTTPException(status_code=400, detail="Tipo de mensaje invalido (adt | orm)")
     if r.estado == EstadoMensaje.COMPLETADO:
         raise HTTPException(status_code=409, detail="La orden ya fue completada")
-    ok = auditoria.reprocesar(correlation_id)
-    if not ok:
+    if not r.payload_dicom_raw:
         raise HTTPException(status_code=400,
                             detail="No se pudo reprocesar (sin payload original)")
-    return {"ok": True}
+    reencolados = auditoria.reprocesar(correlation_id, tipo)
+    if not reencolados:
+        # Sin mensajes en error permanente: o ya hay un reintento automatico en cola
+        # (reprocesar ahora duplicaria el envio) o ese mensaje ya fue aceptado.
+        raise HTTPException(status_code=409,
+                            detail="No hay mensajes en error permanente para reprocesar "
+                                   "(hay un reintento automatico pendiente o ya fueron aceptados)")
+    return {"ok": True, "reprocesados": [t.upper() for t in reencolados]}
 
 
 @app.get("/api/v1/health/channels")

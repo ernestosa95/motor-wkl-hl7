@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, LogIn, AlertTriangle, CheckCircle2, FileText } from 'lucide-react';
+import { X, LogIn, AlertTriangle, CheckCircle2, FileText, RotateCcw } from 'lucide-react';
 import { apiFetch } from './Login';
 
 const ESTADO_COLOR = {
@@ -28,6 +28,30 @@ export default function AuditoriaModal({ orden, onClose }) {
   }, [orden.id]);
 
   const esError = data && data.estado.startsWith('ERROR');
+  const [reproc, setReproc] = useState(null);
+
+  const cargar = async () => {
+    try {
+      const res = await apiFetch(`/api/v1/trazabilidad/${orden.id}/auditoria`);
+      if (res.ok) setData(await res.json());
+    } catch (e) {
+      console.error('Error al cargar auditoría', e);
+    }
+  };
+
+  const reprocesar = async (tipo) => {
+    setReproc(tipo);
+    try {
+      const res = await apiFetch(`/api/v1/trazabilidad/${orden.id}/reprocesar?tipo=${tipo}`, { method: 'POST' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        window.alert(d.detail || 'No se pudo reprocesar el mensaje.');
+      }
+      await cargar();
+    } finally {
+      setReproc(null);
+    }
+  };
 
   return (
     // overflow-y-auto en el overlay + items-start: el modal se alinea arriba y
@@ -83,6 +107,8 @@ export default function AuditoriaModal({ orden, onClose }) {
               </p>
             </div>
 
+            <MensajesEstado mensajes={data.mensajes} reproc={reproc} onReprocesar={reprocesar} />
+
             {data.detalles_error && (
               <div className={`rounded-lg border p-3 ${esError ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
                 <p className={`mb-1 text-[11px] font-medium uppercase tracking-wider ${esError ? 'text-rose-500' : 'text-amber-600'}`}>
@@ -106,6 +132,58 @@ export default function AuditoriaModal({ orden, onClose }) {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+const ESTADO_MSG = {
+  ENVIADO: { texto: 'Enviado y aceptado', clase: 'text-teal-700 bg-teal-50 ring-teal-200' },
+  PENDIENTE: { texto: 'Pendiente / reintentando', clase: 'text-amber-700 bg-amber-50 ring-amber-200' },
+  ERROR_PERMANENTE: { texto: 'Error: reintentos agotados', clase: 'text-rose-700 bg-rose-50 ring-rose-200' },
+};
+
+function MensajesEstado({ mensajes, reproc, onReprocesar }) {
+  const tipos = ['adt', 'orm'];
+  if (!mensajes || !tipos.some((t) => mensajes[t])) return null;
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400">Estado por mensaje</p>
+      <div className="flex flex-col gap-2">
+        {tipos.map((t) => {
+          const m = mensajes[t];
+          if (!m) return null;
+          const est = ESTADO_MSG[m.estado] || { texto: m.estado, clase: 'text-zinc-600 bg-zinc-50 ring-zinc-200' };
+          return (
+            <div key={t} className="rounded-lg border border-zinc-200 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-zinc-800">{t.toUpperCase()}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${est.clase}`}>{est.texto}</span>
+                </div>
+                {m.estado === 'ERROR_PERMANENTE' && (
+                  <button
+                    onClick={() => onReprocesar(t)}
+                    disabled={!!reproc}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <RotateCcw size={13} className={reproc === t ? 'animate-spin' : ''} />
+                    {reproc === t ? 'Reintentando…' : `Reprocesar ${t.toUpperCase()}`}
+                  </button>
+                )}
+              </div>
+              {m.ok && m.destino && (
+                <p className="mt-1 font-mono text-xs text-zinc-400">{m.destino} · {m.cuando}</p>
+              )}
+              {!m.ok && m.ultimo_error && (
+                <p className="mt-1 break-words text-xs text-rose-700">
+                  {m.ultimo_error}
+                  {m.intentos_fallidos ? <span className="text-rose-400"> · {m.intentos_fallidos} intento(s) fallido(s)</span> : null}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
