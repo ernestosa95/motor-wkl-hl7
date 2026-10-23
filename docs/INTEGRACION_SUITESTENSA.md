@@ -456,7 +456,10 @@ caracteres (337 órdenes, ~9 %). En 197 de los 230, cada parte ya existe como es
 **Decisiones (sección 18):** las órdenes con varios estudios se **mantienen como examen combinado** (así se dieron de alta en el RIS: un ORM con un solo `OBR`).
 Para los **textos cortados** hay que **investigar** si el worklist trae el texto completo en otro campo:
 `python tools\consultar_worklist.py <host> <puerto> <AET destino> <AET propio> --combinadas` (pide además `RequestedProcedureComments`,
-`ImagingServiceRequestComments` y `CommentsOnTheScheduledProcedureStep`). **Riesgo mientras tanto:** si el texto se cortó, un estudio puede haber desaparecido
+`ImagingServiceRequestComments` y `CommentsOnTheScheduledProcedureStep`). **Resultado de la prueba (2026-10-23):** el servidor del worklist **soporta** los tres campos de comentarios (los devuelve, vacíos en estudios simples);
+ese día no había órdenes combinadas para ver si los usa. Por eso la ingesta ahora **los guarda en cada orden** (`00401400`, `00402400`, `00400400`):
+cuando entren órdenes combinadas se puede revisar en la base (consulta de la sección 15). Solo aplica a órdenes ingeridas después de actualizar.
+**Riesgo mientras tanto:** si el texto se cortó, un estudio puede haber desaparecido
 sin que se note (por eso un texto de exactamente 64 caracteres es sospechoso).
 
 ---
@@ -539,6 +542,21 @@ from registro_trazabilidad
 where payload_dicom_raw->>'00100010' ~ '[^\x01-\x7F]'
 order by created_at;
 ```
+
+**¿Trae el worklist el texto completo en los comentarios?** (órdenes combinadas ingeridas desde que se guardan esos campos):
+
+```sql
+select accession_number, length(payload_dicom_raw->>'00321060') as largo_texto,
+       payload_dicom_raw->>'00401400' as comentarios_procedimiento,
+       payload_dicom_raw->>'00402400' as comentarios_servicio,
+       payload_dicom_raw->>'00400400' as comentarios_paso
+from registro_trazabilidad
+where payload_dicom_raw->>'00321060' like '%, %'
+  and coalesce(payload_dicom_raw->>'00401400', payload_dicom_raw->>'00402400', payload_dicom_raw->>'00400400', '') <> ''
+order by created_at desc limit 10;
+```
+
+Si devuelve filas con el texto completo, se puede usar en lugar de la descripción cortada. Si no devuelve ninguna pese a haber combinadas, el origen no los usa.
 
 **Pruebas automatizadas:** `pip install -r requirements-dev.txt` y `python -m pytest tests -q` (no necesitan PostgreSQL ni la cola: usan dobles en memoria).
 Cubren marcadores y componentes del serializador, separación de nombres, validación del paciente, clasificación de modalidades, CSV, estados por mensaje,

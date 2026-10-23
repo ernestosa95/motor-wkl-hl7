@@ -42,6 +42,11 @@ def _dataset_a_payload(ds: Dataset) -> dict:
         "00400007": "",
         "00400003": "",
         "00400001": "",
+        # Comentarios (LT, hasta 10240 caracteres): la descripcion (LO) llega cortada a 64
+        # caracteres; estos campos podrian traer el texto completo de las ordenes combinadas.
+        "00401400": _v(ds, "RequestedProcedureComments"),
+        "00402400": _v(ds, "ImagingServiceRequestComments"),
+        "00400400": "",
     }
     cod_seq = getattr(ds, "RequestedProcedureCodeSequence", None)
     if cod_seq and len(cod_seq) > 0:
@@ -57,6 +62,7 @@ def _dataset_a_payload(ds: Dataset) -> dict:
         payload["00400007"] = _v(sps, "ScheduledProcedureStepDescription")
         payload["00400003"] = _v(sps, "ScheduledProcedureStepStartTime")
         payload["00400001"] = _v(sps, "ScheduledStationAETitle")
+        payload["00400400"] = _v(sps, "CommentsOnTheScheduledProcedureStep")
     return payload
 
 
@@ -71,6 +77,8 @@ def _construir_query(fecha_str: str) -> Dataset:
     ds.RequestedProcedureDescription = ""
     ds.ReferringPhysicianName = ""
     ds.RequestedProcedureID = ""
+    ds.RequestedProcedureComments = ""
+    ds.ImagingServiceRequestComments = ""
     cod = Dataset()
     cod.CodeValue = ""
     cod.CodeMeaning = ""
@@ -82,6 +90,7 @@ def _construir_query(fecha_str: str) -> Dataset:
     sps.ScheduledProcedureStepID = ""
     sps.ScheduledProcedureStepDescription = ""
     sps.ScheduledProcedureStepStartTime = ""
+    sps.CommentsOnTheScheduledProcedureStep = ""
     sps.ScheduledProcedureStepStartDate = fecha_str  # clave de matching: HOY
     ds.ScheduledProcedureStepSequence = [sps]
     return ds
