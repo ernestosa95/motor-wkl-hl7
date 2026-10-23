@@ -18,6 +18,9 @@ CATALOGO_DICOM = [
     {"tag": "00400007", "nombre": "Scheduled Procedure Step Description"},
     {"tag": "00400003", "nombre": "Scheduled Procedure Step Start Time"},
     {"tag": "00400001", "nombre": "Scheduled Station AE Title"},
+    {"tag": "00401400", "nombre": "Requested Procedure Comments"},
+    {"tag": "00402400", "nombre": "Imaging Service Request Comments"},
+    {"tag": "00400400", "nombre": "Comments on the Scheduled Procedure Step"},
 ]
 
 # Campos HL7 destino, agrupados por segmento. Sirven como destino de un tag DICOM
