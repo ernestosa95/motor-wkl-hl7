@@ -1,5 +1,6 @@
 """Serializador HL7 v2.5 dirigido por el mapeo + valores fijos configurados."""
 import os
+import re
 import uuid
 import datetime
 
@@ -43,11 +44,38 @@ def escapar(valor) -> str:
     return s.replace("\r", " ").replace("\n", " ")
 
 
-def _set_campo(segmentos, disponibles, campo, valor):
+# {00100020} -> valor del tag DICOM; {00100010:apellido} / {00100010:nombres} -> parte del nombre.
+_PLANTILLA = re.compile(r"\{([0-9A-Fa-f]{8})(?::([a-z]+))?\}")
+
+
+def _valor_derivado(payload: dict, tag: str, parte) -> str:
+    v = str(payload.get(tag, "") or "")
+    if parte not in ("apellido", "nombres"):
+        return v
+    if "^" in v:  # formato DICOM: APELLIDO^NOMBRE[^...]
+        comps = v.split("^")
+        apellido, nombres = comps[0], " ".join(c for c in comps[1:] if c)
+    else:  # el worklist trae "APELLIDO NOMBRES": primera palabra = apellido
+        palabras = v.split(None, 1)
+        apellido = palabras[0] if palabras else ""
+        nombres = palabras[1] if len(palabras) > 1 else ""
+    return apellido if parte == "apellido" else nombres
+
+
+def _renderizar_fijo(valor: str, payload: dict) -> str:
+    """Un valor fijo es HL7 literal (^ ~ & se respetan tal cual). Solo los datos
+    DICOM insertados con {tag} se escapan; se quitan los saltos de linea."""
+    texto = _PLANTILLA.sub(
+        lambda m: escapar(_valor_derivado(payload, m.group(1), m.group(2))), valor)
+    return texto.replace("\r", " ").replace("\n", " ")
+
+
+def _set_campo(segmentos, disponibles, campo, valor, crudo=False):
     """Escribe 'SEG-N' (campo completo) o 'SEG-N.M' (componente M del campo N).
 
     El componente se aplica sobre lo que el campo ya tenga, asi se puede agregar
     p. ej. la autoridad asignadora (PID-3.4) sin perder el ID mapeado en PID-3.
+    crudo=True escribe el valor tal cual (ya es HL7); si no, se escapa.
     """
     try:
         ref, _, comp = campo.partition(".")
@@ -58,7 +86,8 @@ def _set_campo(segmentos, disponibles, campo, valor):
         return
     if seg not in disponibles:
         return
-    valor = escapar(valor)
+    if not crudo:
+        valor = escapar(valor)
     if not comp:
         segmentos[seg][idx] = valor
         return
@@ -68,14 +97,15 @@ def _set_campo(segmentos, disponibles, campo, valor):
     segmentos[seg][idx] = "^".join(partes)
 
 
-def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str) -> str:
+def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, tipo: str,
+                      msg_id: str = None) -> str:
     tipo = tipo.upper()
     if tipo not in CONFIG:
         raise ValueError(f"Tipo de mensaje no soportado: {tipo}")
 
     cfg = CONFIG[tipo]
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    msg_id = uuid.uuid4().hex[:10].upper()
+    msg_id = msg_id or uuid.uuid4().hex[:10].upper()
 
     segmentos = {nombre: dict(cfg["fijos"].get(nombre, {})) for nombre in cfg["segmentos"]}
     disponibles = set(cfg["segmentos"])
@@ -101,7 +131,8 @@ def construir_mensaje(payload_dicom: dict, mapeos: dict, valores_fijos: dict, ti
     # estos ultimos se apliquen sobre el valor final del campo.
     for campo, valor in sorted((valores_fijos or {}).items(), key=lambda kv: "." in kv[0]):
         if valor is not None and str(valor) != "":
-            _set_campo(segmentos, disponibles, campo, str(valor))
+            _set_campo(segmentos, disponibles, campo,
+                       _renderizar_fijo(str(valor), payload_dicom), crudo=True)
 
     # Serialización.
     lineas = []

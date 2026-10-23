@@ -146,7 +146,7 @@ export default function Mapeos() {
         <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
           <div className="px-5 py-3 border-b border-zinc-100">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Valores fijos ({tipo})</h3>
-            <p className="text-[11px] text-zinc-400 mt-0.5">Constantes que se escriben siempre en ese campo, sin depender de un tag DICOM. Sobrescriben lo mapeado.</p>
+            <p className="text-[11px] text-zinc-400 mt-0.5">Se escriben siempre en ese campo y sobrescriben lo mapeado. Es HL7 literal (^ ~ & se respetan). Puedes insertar datos DICOM con {00100020} (Patient ID) y, para el nombre, {00100010:apellido} / {00100010:nombres}. Ej. PID-5: {00100010:apellido}^^{00100010:nombres}</p>
           </div>
           <div className="p-5 grid grid-cols-2 gap-x-6 gap-y-3">
             {(data.catalogo_hl7 || []).map((c) => (

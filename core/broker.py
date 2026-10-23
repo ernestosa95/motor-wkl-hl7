@@ -5,7 +5,7 @@ import datetime
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
 from core.auditoria import actualizar_estado, guardar_hl7, obtener_hl7, registrar_fallo
-from core.emisor_mllp import enviar_mensaje_mllp, ErrorEmision
+from core.emisor_mllp import enviar_mensaje_mllp, control_id, ErrorEmision
 from core.models import EstadoMensaje
 from core import config_repo
 
@@ -49,21 +49,29 @@ def _destino(clave):
 
 
 def _obtener_o_transformar(correlation_id, payload_dicom) -> dict:
-    """Genera ADT + ORM una sola vez. En los reintentos (automaticos o desde
-    'Reprocesar') se reutilizan los mismos mensajes, con el mismo MSH-10, para
-    que el destino pueda detectar duplicados."""
-    mensajes = obtener_hl7(correlation_id) or {}
-    if mensajes.get("adt") and mensajes.get("orm"):
-        mensajes.setdefault("envios", {})
-        return mensajes
+    """Genera los HL7 pendientes con la configuracion de mapeo VIGENTE.
 
-    mensajes = {
-        "adt": procesar_transformacion(payload_dicom, "ADT"),
-        "orm": procesar_transformacion(payload_dicom, "ORM"),
-        "envios": {},
-    }
+    En cada intento (automatico o 'Reprocesar') se regeneran ADT/ORM que aun no
+    fueron aceptados, asi un cambio de mapeo o de valores fijos se aplica al
+    reenviar. Se conserva el MSH-10 original, para que el destino pueda detectar
+    duplicados. Lo ya aceptado (envios[tipo].ok) no se toca ni se reenvia.
+    """
+    mensajes = obtener_hl7(correlation_id) or {}
+    envios = mensajes.setdefault("envios", {})
+    primera_vez = not (mensajes.get("adt") or mensajes.get("orm"))
+
+    for tipo in ("adt", "orm"):
+        if envios.get(tipo, {}).get("ok") and mensajes.get(tipo):
+            continue
+        previo = mensajes.get(tipo)
+        mensajes[tipo] = procesar_transformacion(
+            payload_dicom, tipo.upper(),
+            msg_id=(control_id(previo) or None) if previo else None,
+        )
+
     guardar_hl7(correlation_id, mensajes)
-    actualizar_estado(correlation_id, EstadoMensaje.TRANSFORMADO)
+    if primera_vez:
+        actualizar_estado(correlation_id, EstadoMensaje.TRANSFORMADO)
     return mensajes
 
 
