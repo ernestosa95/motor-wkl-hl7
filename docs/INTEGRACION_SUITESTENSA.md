@@ -15,7 +15,7 @@
 | Mensaje | Estado |
 |---|---|
 | **ADT^A04** (alta/admisión del paciente) | ✅ Funciona de punta a punta: el RIS crea el paciente (`Resultado: Yes`). |
-| **ORM^O01** (orden del estudio) | 🔶 Casi: tras los ajustes, al 17:42 el RIS solo devolvía `I.REST C02 - Exam Code 1 not encoded`. Falta que el **código de examen** enviado exista en el RIS. |
+| **ORM^O01** (orden del estudio) | 🔶 Casi: tras los ajustes, al 17:42 el RIS solo devolvía `I.REST C02 - Exam Code 1 not encoded`. Falta que el **código de examen** enviado exista en el RIS: 314 de los 522 códigos chocan con exámenes preexistentes (sección 11.0). |
 
 Lo pendiente principal es la **codificación del examen** (sección 11). Lo demás está resuelto o es mejora.
 
@@ -342,7 +342,30 @@ La salida conserva el texto original y los códigos (1 a 522) y agrega `modalida
 **Síntoma:** el motor ya envía `OBR-4` = `1^radiografía simple de tórax` (la equivalencia y la plantilla funcionan), y el RIS responde
 `C02 - Exam Code 1 not encoded`: **no encuentra un examen con código `1`**.
 
-### 11.1 Hipótesis (ordenadas)
+### 11.0 Causa encontrada (catálogo del RIS, `exams.csv`, 1000 exámenes)
+
+Al cruzar el catálogo del RIS con los 522 estudios del motor (códigos 1 a 522):
+
+- Los 522 códigos **existen** en el RIS, pero **314 están ocupados por otros exámenes ya existentes** (RX, mamografías, densitometría...),
+  que el RIS conserva con `ExternalCode = 0`. Al dar de alta el listado, esos 314 **no se cargaron** (colisión de código).
+- Rangos: **cargados bien** `2–100`, `122–200`, `493–522` (208 estudios, `ExternalCode = Code`); **en colisión** `1`, `101–121`, `201–492` (314).
+- **Explica el error:** el código `1` del RIS es `D.M.O. DENSITOMETRÍA ÓSEA` con `ExternalCode 0`; el motor enviaba `1` para
+  `radiografía simple de tórax` y el RIS respondía `Exam Code 1 not encoded`. 🔶 Inferencia: el RIS reconoce el código enviado en `OBR-4`
+  por su **`ExternalCode`** (si usara `Code`, el `1` existiría).
+- En los 208 cargados, la **modalidad** del RIS coincide al 100 % con la asignada por `tools/clasificar_modalidad_ris.py`.
+- El RIS tiene códigos numéricos de `1` a `5008`; **no hay huecos entre 1 y 519**, y el siguiente bloque empieza en `1001`.
+
+**Riesgo (mientras no se corrija):** el motor tiene cargados esos 314 códigos. Hoy el RIS los rechaza (`not encoded`), pero si alguna vez
+reconociera un código por `Code`, una orden se registraría con el examen equivocado (p. ej. `101` = `MAMOGRAFIA BILATERAL`).
+
+**Corrección propuesta** (archivos generados el 2026-10-23):
+1. Dar de alta en el RIS los 314 estudios con **códigos nuevos `523–836`** (hueco libre del RIS, sin colisión).
+2. Importar en *Estudios* el listado completo corregido (208 sin cambios + 314 con código nuevo); la importación actualiza los existentes.
+3. Reprocesar el ORM de las órdenes retenidas.
+
+Alternativa: en vez de dar de alta duplicados, **enlazar** los estudios con exámenes que el RIS ya tiene (`RX PIE PERFIL`, etc.): requiere revisión manual de equivalencias.
+
+### 11.1 Hipótesis iniciales (antes de ver el catálogo del RIS)
 
 1. 🔶 El RIS **asignó su propia numeración** al dar de alta los estudios y el código real no es `1`. Verificar qué código tiene `radiografía simple de tórax` en el RIS.
 2. 🔶 El examen existe pero **no está vinculado** al servicio / modalidad / procedencia (`INT`) con que llega la orden.
@@ -438,7 +461,7 @@ esto elimina su trazabilidad.
 
 | Prioridad | Tema |
 |---|---|
-| **Alta** | Resolver el **código de examen** (sección 11) |
+| **Alta** | Resolver las **colisiones de código** (314 estudios, sección 11.0): recodificar, dar de alta e importar |
 | **Alta** | Decidir el tratamiento de los **textos cortados y órdenes con varios estudios** (11.4) |
 | Alta | Verificar `MSH-18` / codificación UTF-8 con un paciente con tildes (sección 12) |
 | Media | Abrir el **PR** de `build/script-windows` / `feat/adt-mirth` hacia `main` |
