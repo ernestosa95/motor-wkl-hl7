@@ -273,9 +273,10 @@ def corregir_paciente(correlation_id, cambios: dict, usuario: str = ""):
                 payload[tag] = valor
 
         if "apellido" in cambios or "nombres" in cambios:
-            ap, no = separar_nombre(payload.get(vp.TAG_NOMBRE))
-            ap, no = cambios.get("apellido", ap), cambios.get("nombres", no)
-            poner(vp.TAG_NOMBRE, "%s^%s" % (ap, no) if no else ap)
+            actual = separar_nombre(payload.get(vp.TAG_NOMBRE))
+            ap, no = cambios.get("apellido", actual[0]), cambios.get("nombres", actual[1])
+            if (ap, no) != actual:  # solo si cambia de verdad (no por pasar de "A B" a "A^B")
+                poner(vp.TAG_NOMBRE, "%s^%s" % (ap, no) if no else ap)
         if "fecha_nacimiento" in cambios:
             poner(vp.TAG_NACIMIENTO, cambios["fecha_nacimiento"])
         if "sexo" in cambios:

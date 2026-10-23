@@ -59,7 +59,15 @@ def test_corregir_paciente_registra_antes_y_despues(monkeypatch):
     c = reg.payload_dicom_raw["_correcciones"][0]
     assert c["usuario"] == "ernesto" and c["antes"]["00100010"] == "CARRASCO" and c["despues"]["00100040"] == "F"
     A.corregir_paciente("c1", {"sexo": "F"})                                # sin cambios: no agrega registro
+    A.corregir_paciente("c1", {"apellido": "CARRASCO", "nombres": "TANIA"})  # mismo nombre
     assert len(reg.payload_dicom_raw["_correcciones"]) == 1
+
+
+def test_corregir_no_registra_falsos_cambios_de_formato(monkeypatch):
+    reg = Registro(dict(PACIENTE_OK))                                       # "CARRASCO TANIA" (sin ^)
+    A = instalar_en_auditoria(monkeypatch, reg)
+    A.corregir_paciente("c1", {"apellido": "CARRASCO", "nombres": "TANIA", "sexo": "F", "fecha_nacimiento": "20050711"})
+    assert "_correcciones" not in reg.payload_dicom_raw and reg.payload_dicom_raw["00100010"] == "CARRASCO TANIA"
 
 
 @pytest.mark.parametrize("cambios", [{"apellido": "  "}, {"nombres": ""}, {"fecha_nacimiento": "20990101"}, {"sexo": "X"}])

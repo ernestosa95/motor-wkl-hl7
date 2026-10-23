@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, LogIn, AlertTriangle, CheckCircle2, FileText, RotateCcw, Send } from 'lucide-react';
+import { X, LogIn, AlertTriangle, CheckCircle2, FileText, RotateCcw, Send, Pencil } from 'lucide-react';
 import { apiFetch } from './Login';
 
 const ESTADO_COLOR = {
@@ -138,12 +138,13 @@ export default function AuditoriaModal({ orden, onClose }) {
 
               {/* Columna izquierda: estado */}
               <div className="flex flex-col gap-4 lg:col-span-2">
-                <div className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                  <Dato label="Paciente" valor={data.paciente} />
-                  <Dato label="Modalidad" valor={data.modalidad} />
-                  <Dato label="Estado actual" valor={data.estado} clase={ESTADO_COLOR[data.estado]} />
-                  <Dato label="Reintentos" valor={data.reintentos} />
-                </div>
+                <DatosPaciente
+                  orden={orden}
+                  datos={data.paciente_datos}
+                  modalidad={data.modalidad}
+                  paciente={data.paciente}
+                  onGuardado={async (d, aviso) => { setAviso(aviso); await cargar(); }}
+                />
 
                 <div className="grid grid-cols-2 gap-3 border-y border-zinc-100 py-3">
                   <Evento icon={LogIn} color="text-zinc-500" titulo="Ingresó" hora={data.ingresado} />
@@ -162,7 +163,8 @@ export default function AuditoriaModal({ orden, onClose }) {
                   onReenviar={reenviar}
                 />
 
-                {data.detalles_error && (
+                {/* Solo para órdenes antiguas: ahora cada mensaje muestra su propio error */}
+                {data.detalles_error && !Object.values(data.mensajes || {}).some((m) => m.ultimo_error) && (
                   <div className={`rounded-lg border p-3 ${esError ? 'border-rose-200 bg-rose-50' : 'border-amber-200 bg-amber-50'}`}>
                     <p className={`mb-1 text-[11px] font-medium uppercase tracking-wider ${esError ? 'text-rose-500' : 'text-amber-600'}`}>
                       {esError ? 'Detalle del error' : 'Error de un intento anterior (resuelto)'}
@@ -195,6 +197,123 @@ export default function AuditoriaModal({ orden, onClose }) {
       </div>
     </div>,
     document.body
+  );
+}
+
+const SEXOS = [['F', 'Femenino'], ['M', 'Masculino'], ['O', 'Otro'], ['U', 'Sin definir']];
+
+// AAAAMMDD -> DD/MM/AAAA para mostrar; acepta ambos formatos al editar.
+const verFecha = (f) => (/^\d{8}$/.test(f || '') ? `${f.slice(6)}/${f.slice(4, 6)}/${f.slice(0, 4)}` : (f || ''));
+const aAAAAMMDD = (t) => {
+  const m = String(t).trim().match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
+  return m ? `${m[3]}${m[2].padStart(2, '0')}${m[1].padStart(2, '0')}` : String(t).trim().replace(/-/g, '');
+};
+
+// Datos del paciente tal como se envían; si faltan o son dudosos se pueden corregir a mano.
+function DatosPaciente({ orden, datos, modalidad, paciente, onGuardado }) {
+  const [editando, setEditando] = useState(false);
+  const [f, setF] = useState({});
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState(null);
+  if (!datos) return null;
+  const problemas = datos.problemas || [];
+  const corr = datos.correcciones || [];
+  const ultima = corr[corr.length - 1];
+
+  const abrir = () => {
+    setF({ apellido: datos.apellido, nombres: datos.nombres, nacimiento: verFecha(datos.fecha_nacimiento), sexo: datos.sexo });
+    setError(null);
+    setEditando(true);
+  };
+
+  const guardar = async (reenviar) => {
+    setGuardando(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/v1/trazabilidad/${orden.id}/paciente`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apellido: f.apellido, nombres: f.nombres,
+          fecha_nacimiento: aAAAAMMDD(f.nacimiento), sexo: f.sexo || null, reenviar,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(d.detail || 'No se pudo guardar.'); return; }
+      setEditando(false);
+      await onGuardado(d, {
+        ok: true,
+        texto: reenviar ? `Datos guardados. Reenviando: ${(d.reenviados || []).join(' y ') || 'nada para reenviar'}.` : 'Datos del paciente guardados.',
+      });
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const campo = 'w-full rounded-md border border-zinc-200 px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-teal-400';
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">Datos del paciente</p>
+        {!editando && (
+          <button onClick={abrir} className="inline-flex items-center gap-1 text-[11px] font-medium text-teal-700 hover:text-teal-800">
+            <Pencil size={11} /> Corregir
+          </button>
+        )}
+      </div>
+
+      {editando ? (
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+          <label className="text-[11px] text-zinc-400">Apellido
+            <input className={campo} value={f.apellido} onChange={(e) => setF({ ...f, apellido: e.target.value })} />
+          </label>
+          <label className="text-[11px] text-zinc-400">Nombres
+            <input className={campo} value={f.nombres} onChange={(e) => setF({ ...f, nombres: e.target.value })} />
+          </label>
+          <label className="text-[11px] text-zinc-400">Nacimiento (DD/MM/AAAA)
+            <input className={campo} value={f.nacimiento} onChange={(e) => setF({ ...f, nacimiento: e.target.value })} placeholder="DD/MM/AAAA" />
+          </label>
+          <label className="text-[11px] text-zinc-400">Sexo
+            <select className={campo} value={f.sexo} onChange={(e) => setF({ ...f, sexo: e.target.value })}>
+              <option value="">—</option>
+              {SEXOS.map(([k, v]) => <option key={k} value={k}>{k} · {v}</option>)}
+            </select>
+          </label>
+          {error && <p className="col-span-2 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">{error}</p>}
+          <div className="col-span-2 flex items-center justify-end gap-2">
+            <button onClick={() => setEditando(false)} disabled={guardando}
+              className="rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100">Cancelar</button>
+            <button onClick={() => guardar(false)} disabled={guardando}
+              className="rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">Guardar</button>
+            <button onClick={() => guardar(true)} disabled={guardando}
+              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-teal-700 disabled:opacity-50">
+              <Send size={12} /> Guardar y reenviar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <Dato label="Documento" valor={datos.documento || paciente} />
+          <Dato label="Modalidad" valor={modalidad} />
+          <Dato label="Apellido" valor={datos.apellido || '—'} clase={datos.apellido ? 'text-zinc-800' : 'text-rose-600'} />
+          <Dato label="Nombres" valor={datos.nombres || '—'} clase={datos.nombres ? 'text-zinc-800' : 'text-rose-600'} />
+          <Dato label="Nacimiento" valor={verFecha(datos.fecha_nacimiento) || '—'} />
+          <Dato label="Sexo" valor={datos.sexo || '—'} />
+        </div>
+      )}
+
+      {problemas.length > 0 && !editando && (
+        <p className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+          No se puede enviar: {problemas.join('; ')}.
+        </p>
+      )}
+      {ultima && !editando && (
+        <p className="mt-1.5 text-[11px] text-zinc-400">
+          Corregido a mano por {ultima.usuario || '—'} · {ultima.cuando}
+          {corr.length > 1 ? ` (${corr.length} correcciones)` : ''}
+        </p>
+      )}
+    </div>
   );
 }
 
