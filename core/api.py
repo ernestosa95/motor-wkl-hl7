@@ -237,8 +237,7 @@ class ImportarIn(BaseModel):
 
 @app.get("/api/v1/equivalencias")
 def listar_equivalencias(_user: Usuario = Depends(get_current_user)):
-    return {"equivalencias": equivalencias_repo.listar(),
-            "pendientes": equivalencias_repo.pendientes()}
+    return equivalencias_repo.panel()
 
 
 @app.put("/api/v1/equivalencias")

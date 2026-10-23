@@ -147,21 +147,55 @@ def importar_csv(texto: str) -> dict:
     return {"nuevos": nuevos, "actualizados": actualizados, "omitidas": omitidas, "errores": errores}
 
 
-def pendientes() -> list:
-    """Descripciones que llegaron en ordenes y aun no tienen equivalencia."""
+TAG_MODALIDAD = "00080060"  # Modality
+
+
+def _uso_por_estudio(db):
+    """Por cada texto de estudio (clave normalizada): ejemplo, total de ordenes y
+    modalidades DICOM con que llego, segun el historial de ordenes."""
+    desc = RegistroTrazabilidad.payload_dicom_raw[TAG_DESCRIPCION].astext
+    mod = RegistroTrazabilidad.payload_dicom_raw[TAG_MODALIDAD].astext
+    filas = db.query(desc, mod, func.count()).group_by(desc, mod).all()
+    uso = {}
+    for d, m, n in filas:
+        clave = normalizar(d)
+        if not clave:
+            continue
+        u = uso.setdefault(clave, {"descripcion": " ".join(str(d).split()),
+                                   "cantidad": 0, "mods": Counter()})
+        u["cantidad"] += n
+        if m:
+            u["mods"][m.strip().upper()] += n
+    return uso
+
+
+def _txt_modalidades(mods: Counter) -> str:
+    return "/".join(m for m, _ in mods.most_common())
+
+
+def panel() -> dict:
+    """Equivalencias cargadas y estudios pendientes, ambos con su modalidad DICOM."""
     _asegurar_tabla()
     db = SessionLocal()
     try:
-        cargadas = {e.clave for e in db.query(EquivalenciaEstudio.clave).all()}
-        expr = RegistroTrazabilidad.payload_dicom_raw[TAG_DESCRIPCION].astext
-        filas = db.query(expr, func.count()).group_by(expr).all()
+        equivalencias = db.query(EquivalenciaEstudio).order_by(
+            EquivalenciaEstudio.descripcion_origen).all()
+        cargadas = {e.clave for e in equivalencias}
+        uso = _uso_por_estudio(db)
+        eqs = []
+        for e in equivalencias:
+            d = _to_dict(e)
+            d["modalidad"] = _txt_modalidades(uso.get(e.clave, {}).get("mods", Counter()))
+            eqs.append(d)
     finally:
         db.close()
-    cuenta, ejemplo = Counter(), {}
-    for desc, n in filas:
-        clave = normalizar(desc)
-        if not clave or clave in cargadas:
-            continue
-        cuenta[clave] += n
-        ejemplo.setdefault(clave, " ".join(str(desc).split()))
-    return [{"descripcion": ejemplo[c], "cantidad": n} for c, n in cuenta.most_common()]
+    pend = [{"descripcion": u["descripcion"], "cantidad": u["cantidad"],
+             "modalidad": _txt_modalidades(u["mods"])}
+            for c, u in sorted(uso.items(), key=lambda kv: -kv[1]["cantidad"])
+            if c not in cargadas]
+    return {"equivalencias": eqs, "pendientes": pend}
+
+
+def pendientes() -> list:
+    """Descripciones que llegaron en ordenes y aun no tienen equivalencia."""
+    return panel()["pendientes"]

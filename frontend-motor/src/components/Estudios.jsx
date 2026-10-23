@@ -68,14 +68,14 @@ export default function Estudios() {
 
   const exportarPendientes = () =>
     descargarCsv(`estudios_pendientes_${hoy()}.csv`, [
-      ['descripcion_origen', 'codigo', 'descripcion_destino', 'ordenes'],
-      ...data.pendientes.map((p) => [p.descripcion, '', '', p.cantidad]),
+      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad', 'ordenes'],
+      ...data.pendientes.map((p) => [p.descripcion, '', '', p.modalidad || '', p.cantidad]),
     ]);
 
   const exportarEquivalencias = () =>
     descargarCsv(`estudios_equivalencias_${hoy()}.csv`, [
-      ['descripcion_origen', 'codigo', 'descripcion_destino'],
-      ...data.equivalencias.map((e) => [e.descripcion_origen, e.codigo_destino, e.descripcion_destino]),
+      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad'],
+      ...data.equivalencias.map((e) => [e.descripcion_origen, e.codigo_destino, e.descripcion_destino, e.modalidad || '']),
     ]);
 
   const eliminar = async (e) => {
@@ -161,6 +161,9 @@ export default function Estudios() {
               return (
                 <div key={p.descripcion} className="px-5 py-3 grid grid-cols-12 gap-3 items-center">
                   <div className="col-span-5 text-sm text-zinc-800">
+                    {p.modalidad && (
+                      <span className="mr-2 inline-flex rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600">{p.modalidad}</span>
+                    )}
                     {p.descripcion}
                     <span className="ml-2 text-[11px] text-zinc-400">{p.cantidad} orden(es)</span>
                   </div>
@@ -221,6 +224,7 @@ export default function Estudios() {
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
                 <th className="px-5 py-2 font-medium">Texto del worklist</th>
+                <th className="px-3 py-2 font-medium">Modalidad</th>
                 <th className="px-3 py-2 font-medium">Código</th>
                 <th className="px-3 py-2 font-medium">Descripción destino</th>
                 <th className="px-5 py-2" />
@@ -230,6 +234,11 @@ export default function Estudios() {
               {lista.map((e) => (
                 <tr key={e.id}>
                   <td className="px-5 py-2 text-zinc-800">{e.descripcion_origen}</td>
+                  <td className="px-3 py-2">
+                    {e.modalidad && (
+                      <span className="inline-flex rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600">{e.modalidad}</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-zinc-700">{e.codigo_destino}</td>
                   <td className="px-3 py-2 text-zinc-600">{e.descripcion_destino}</td>
                   <td className="px-5 py-2 text-right">
