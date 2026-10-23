@@ -98,4 +98,17 @@ class EquivalenciaEstudio(Base):
     descripcion_origen = Column(String(256), nullable=False)
     codigo_destino = Column(String(64), nullable=False)
     descripcion_destino = Column(String(256), nullable=False)
+    # Modalidad del RIS (una de core.modalidad_ris.MODALIDADES_RIS); decide el equipo.
+    modalidad_ris = Column(String(32), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class EquipoModalidad(Base):
+    """Equipo (y unidad de negocio) que el RIS asigna por defecto a cada modalidad."""
+    __tablename__ = "equipos_modalidad"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    modalidad = Column(String(32), unique=True, nullable=False, index=True)
+    codigo_equipo = Column(String(64), nullable=False)
+    descripcion_equipo = Column(String(256), nullable=False, default="")
+    unidad_negocio = Column(String(64), nullable=False, default="")
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

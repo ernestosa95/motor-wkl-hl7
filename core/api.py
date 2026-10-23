@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from core.models import RegistroTrazabilidad, EstadoMensaje, Usuario
 from core.auth import autenticar, crear_token, get_current_user, get_usuario_token, get_db, hash_password
-from core import config_repo, mapeo_repo, auditoria, equivalencias_repo
+from core import config_repo, mapeo_repo, auditoria, equivalencias_repo, equipos_repo
 from core.conectividad import test_dicom_echo, test_mllp
 
 app = FastAPI(title="Motor HL7 API", version="1.6")
@@ -229,6 +229,13 @@ class EquivalenciaIn(BaseModel):
     descripcion_origen: str
     codigo_destino: str
     descripcion_destino: str = ""
+    modalidad_ris: Optional[str] = None
+
+
+class EquipoIn(BaseModel):
+    codigo_equipo: str
+    descripcion_equipo: str = ""
+    unidad_negocio: str = ""
 
 
 class ImportarIn(BaseModel):
@@ -244,7 +251,7 @@ def listar_equivalencias(_user: Usuario = Depends(get_current_user)):
 def guardar_equivalencia(body: EquivalenciaIn, _user: Usuario = Depends(get_current_user)):
     try:
         return equivalencias_repo.upsert(body.descripcion_origen, body.codigo_destino,
-                                         body.descripcion_destino)
+                                         body.descripcion_destino, body.modalidad_ris)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -259,3 +266,24 @@ def eliminar_equivalencia(id_: str, _user: Usuario = Depends(get_current_user)):
 @app.post("/api/v1/equivalencias/importar")
 def importar_equivalencias(body: ImportarIn, _user: Usuario = Depends(get_current_user)):
     return equivalencias_repo.importar_csv(body.csv)
+
+
+# ---------- Equipo por modalidad ----------
+
+@app.get("/api/v1/equipos")
+def listar_equipos(_user: Usuario = Depends(get_current_user)):
+    return equipos_repo.listar()
+
+
+@app.put("/api/v1/equipos/{modalidad}")
+def guardar_equipo(modalidad: str, body: EquipoIn, _user: Usuario = Depends(get_current_user)):
+    try:
+        return equipos_repo.guardar(modalidad, body.codigo_equipo, body.descripcion_equipo,
+                                    body.unidad_negocio)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/equipos/restaurar")
+def restaurar_equipos(_user: Usuario = Depends(get_current_user)):
+    return equipos_repo.restaurar()

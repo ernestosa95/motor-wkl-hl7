@@ -38,7 +38,7 @@ export default function Estudios() {
   };
   useEffect(() => { cargar(); }, []);
 
-  const guardar = async (origen, codigo, destino) => {
+  const guardar = async (origen, codigo, destino, modalidad) => {
     if (!codigo.trim()) {
       setAviso({ ok: false, texto: 'Falta el código de destino.' });
       return;
@@ -49,7 +49,7 @@ export default function Estudios() {
       const res = await apiFetch('/api/v1/equivalencias', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ descripcion_origen: origen, codigo_destino: codigo, descripcion_destino: destino || '' }),
+        body: JSON.stringify({ descripcion_origen: origen, codigo_destino: codigo, descripcion_destino: destino || '', modalidad_ris: modalidad || null }),
       });
       if (res.ok) {
         setAviso({ ok: true, texto: `Guardado: ${origen} → ${codigo}.` });
@@ -68,14 +68,15 @@ export default function Estudios() {
 
   const exportarPendientes = () =>
     descargarCsv(`estudios_pendientes_${hoy()}.csv`, [
-      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad', 'ordenes'],
-      ...data.pendientes.map((p) => [p.descripcion, '', '', p.modalidad || '', p.cantidad]),
+      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad_ris', 'modalidad_dicom', 'ordenes'],
+      ...data.pendientes.map((p) => [p.descripcion, '', '', p.modalidad_sugerida || '', p.modalidad || '', p.cantidad]),
     ]);
 
   const exportarEquivalencias = () =>
     descargarCsv(`estudios_equivalencias_${hoy()}.csv`, [
-      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad'],
-      ...data.equivalencias.map((e) => [e.descripcion_origen, e.codigo_destino, e.descripcion_destino, e.modalidad || '']),
+      ['descripcion_origen', 'codigo', 'descripcion_destino', 'modalidad_ris', 'modalidad_dicom'],
+      ...data.equivalencias.map((e) => [e.descripcion_origen, e.codigo_destino, e.descripcion_destino,
+        e.modalidad_ris || e.modalidad_sugerida || '', e.modalidad || '']),
     ]);
 
   const eliminar = async (e) => {
@@ -136,6 +137,8 @@ export default function Estudios() {
         </div>
       )}
 
+      <Equipos data={data} onCambio={cargar} setAviso={setAviso} />
+
       {/* Pendientes */}
       {data.pendientes.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-white overflow-hidden">
@@ -156,11 +159,11 @@ export default function Estudios() {
           </div>
           <div className="divide-y divide-zinc-100">
             {data.pendientes.map((p) => {
-              const b = borrador[p.descripcion] || { codigo: '', destino: '' };
+              const b = borrador[p.descripcion] || { codigo: '', destino: '', modalidad: p.modalidad_sugerida || '' };
               const set = (campo, v) => setBorrador((x) => ({ ...x, [p.descripcion]: { ...b, [campo]: v } }));
               return (
                 <div key={p.descripcion} className="px-5 py-3 grid grid-cols-12 gap-3 items-center">
-                  <div className="col-span-5 text-sm text-zinc-800">
+                  <div className="col-span-4 text-sm text-zinc-800">
                     {p.modalidad && (
                       <span className="mr-2 inline-flex rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600">{p.modalidad}</span>
                     )}
@@ -169,10 +172,15 @@ export default function Estudios() {
                   </div>
                   <input className={`${input} col-span-2 font-mono`} placeholder="Código destino" value={b.codigo}
                     onChange={(e) => set('codigo', e.target.value)} />
-                  <input className={`${input} col-span-4`} placeholder="Descripción destino (opcional)" value={b.destino}
+                  <select className={`${input} col-span-2`} value={b.modalidad} title="Modalidad del RIS (decide el equipo)"
+                    onChange={(e) => set('modalidad', e.target.value)}>
+                    <option value="">Modalidad…</option>
+                    {(data.modalidades_ris || []).map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <input className={`${input} col-span-3`} placeholder="Descripción destino (opcional)" value={b.destino}
                     onChange={(e) => set('destino', e.target.value)} />
                   <button
-                    onClick={() => guardar(p.descripcion, b.codigo, b.destino)}
+                    onClick={() => guardar(p.descripcion, b.codigo, b.destino, b.modalidad)}
                     disabled={ocupado === p.descripcion}
                     className="col-span-1 inline-flex items-center justify-center gap-1 rounded-lg bg-teal-600 text-white text-sm font-medium py-1.5 hover:bg-teal-700 disabled:opacity-50"
                   >
@@ -224,7 +232,7 @@ export default function Estudios() {
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wider text-zinc-400 border-b border-zinc-100">
                 <th className="px-5 py-2 font-medium">Texto del worklist</th>
-                <th className="px-3 py-2 font-medium">Modalidad</th>
+                <th className="px-3 py-2 font-medium">Modalidad RIS</th>
                 <th className="px-3 py-2 font-medium">Código</th>
                 <th className="px-3 py-2 font-medium">Descripción destino</th>
                 <th className="px-5 py-2" />
@@ -235,9 +243,15 @@ export default function Estudios() {
                 <tr key={e.id}>
                   <td className="px-5 py-2 text-zinc-800">{e.descripcion_origen}</td>
                   <td className="px-3 py-2">
-                    {e.modalidad && (
-                      <span className="inline-flex rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] text-zinc-600">{e.modalidad}</span>
-                    )}
+                    <select
+                      value={e.modalidad_ris || ''}
+                      onChange={(ev) => guardar(e.descripcion_origen, e.codigo_destino, e.descripcion_destino, ev.target.value)}
+                      title={e.modalidad ? `Modalidad DICOM en el worklist: ${e.modalidad}` : ''}
+                      className="rounded-md border border-zinc-200 px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-teal-400"
+                    >
+                      <option value="">{e.modalidad_sugerida ? `sugerida: ${e.modalidad_sugerida}` : '—'}</option>
+                      {(data.modalidades_ris || []).map((m) => <option key={m} value={m}>{m}</option>)}
+                    </select>
                   </td>
                   <td className="px-3 py-2 font-mono text-zinc-700">{e.codigo_destino}</td>
                   <td className="px-3 py-2 text-zinc-600">{e.descripcion_destino}</td>
@@ -251,6 +265,83 @@ export default function Estudios() {
             </tbody>
           </table>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Equipo (y unidad de negocio) por modalidad del RIS: valores por defecto editables.
+function Equipos({ data, onCambio, setAviso }) {
+  const [edit, setEdit] = useState({});
+  const [ocupado, setOcupado] = useState(null);
+
+  const valor = (e, campo) => (edit[e.modalidad]?.[campo] ?? e[campo]);
+  const set = (m, campo, v) => setEdit((x) => ({ ...x, [m]: { ...(x[m] || {}), [campo]: v } }));
+
+  const guardar = async (e) => {
+    setOcupado(e.modalidad);
+    setAviso(null);
+    const res = await apiFetch(`/api/v1/equipos/${encodeURIComponent(e.modalidad)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        codigo_equipo: valor(e, 'codigo_equipo'),
+        descripcion_equipo: valor(e, 'descripcion_equipo'),
+        unidad_negocio: valor(e, 'unidad_negocio'),
+      }),
+    });
+    if (res.ok) {
+      setEdit((x) => { const n = { ...x }; delete n[e.modalidad]; return n; });
+      setAviso({ ok: true, texto: `Equipo de ${e.modalidad} guardado.` });
+      await onCambio();
+    } else {
+      const d = await res.json().catch(() => ({}));
+      setAviso({ ok: false, texto: d.detail || 'No se pudo guardar el equipo.' });
+    }
+    setOcupado(null);
+  };
+
+  const restaurar = async () => {
+    if (!window.confirm('¿Restaurar los equipos de todas las modalidades a sus valores por defecto?')) return;
+    const res = await apiFetch('/api/v1/equipos/restaurar', { method: 'POST' });
+    if (res.ok) { setEdit({}); await onCambio(); setAviso({ ok: true, texto: 'Equipos restaurados.' }); }
+  };
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
+      <div className="px-5 py-3 border-b border-zinc-100 flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Equipo por modalidad</h3>
+          <p className="text-[11px] text-zinc-400 mt-0.5">
+            Equipo genérico que se asigna según la modalidad del RIS del estudio. Úsalo en Mapeo → Valores fijos con
+            <span className="font-mono"> {'{codigo_equipo}'}</span>, <span className="font-mono">{'{descripcion_equipo}'}</span> y
+            <span className="font-mono"> {'{unidad_negocio}'}</span> (ej. PV1-3: <span className="font-mono">{'{codigo_equipo}^^^^^^^{descripcion_equipo}'}</span>).
+          </p>
+        </div>
+        <button onClick={restaurar}
+          className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-50">
+          Restaurar por defecto
+        </button>
+      </div>
+      <div className="divide-y divide-zinc-100">
+        {(data.equipos || []).map((e) => {
+          const cambiado = !!edit[e.modalidad];
+          return (
+            <div key={e.modalidad} className="px-5 py-2.5 grid grid-cols-12 gap-3 items-center">
+              <div className="col-span-3 text-sm text-zinc-800">{e.modalidad}</div>
+              <input className={`${input} col-span-2 font-mono`} placeholder="Código equipo" value={valor(e, 'codigo_equipo')}
+                onChange={(ev) => set(e.modalidad, 'codigo_equipo', ev.target.value)} />
+              <input className={`${input} col-span-3`} placeholder="Descripción del equipo" value={valor(e, 'descripcion_equipo')}
+                onChange={(ev) => set(e.modalidad, 'descripcion_equipo', ev.target.value)} />
+              <input className={`${input} col-span-3`} placeholder="Unidad de negocio" value={valor(e, 'unidad_negocio')}
+                onChange={(ev) => set(e.modalidad, 'unidad_negocio', ev.target.value)} />
+              <button onClick={() => guardar(e)} disabled={!cambiado || ocupado === e.modalidad}
+                className="col-span-1 inline-flex items-center justify-center rounded-lg bg-teal-600 text-white py-1.5 hover:bg-teal-700 disabled:opacity-30">
+                {ocupado === e.modalidad ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              </button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -180,6 +180,7 @@ Un valor fijo es **HL7 literal**: `^` `~` `&` se respetan tal cual (permite repe
 | `{00100010:apellido}` / `{00100010:nombres}` | Parte del nombre: con `^` usa el formato DICOM (`APELLIDO^NOMBRE`); sin `^`, **primera palabra = apellido**, resto = nombres |
 | `{ahora}` | Fecha/hora del mensaje (`AAAAMMDDhhmmss`, la misma de `MSH-7`) |
 | `{codigo_estudio}` / `{descripcion_estudio}` | Equivalencia del estudio (pantalla *Estudios*); si falta, **el mensaje no se emite** (sección 9) |
+| `{codigo_equipo}` / `{descripcion_equipo}` / `{unidad_negocio}` | Equipo genérico de la **modalidad del RIS** del estudio (sección 10.2); si la modalidad no tiene equipo, **el mensaje no se emite** |
 
 **Componentes:** `SEG-N.M` escribe solo el componente M del campo N, sobre lo que ya tenga (p. ej. `PID-3.4`).
 Se aplican **después** de los campos completos.
@@ -187,7 +188,7 @@ Se aplican **después** de los campos completos.
 **Limitaciones conocidas:**
 - Un valor fijo **no puede vaciar** un campo mapeado desde DICOM (los valores vacíos se ignoran). Para dejarlo vacío hay
   que quitar el destino en la pestaña de mapeos.
-- Los marcadores son `{tag de 8 hex}`, `{tag:apellido|nombres}`, `{ahora}`, `{codigo_estudio}`, `{descripcion_estudio}`. Cualquier otro nombre da error.
+- Los marcadores son `{tag de 8 hex}`, `{tag:apellido|nombres}`, `{ahora}`, `{codigo_estudio}`, `{descripcion_estudio}`, `{codigo_equipo}`, `{descripcion_equipo}`, `{unidad_negocio}`. Cualquier otro nombre da error.
 - El tipo/longitud de los campos **no se valida**: lo que se escribe va tal cual.
 - Un apellido compuesto (`DE LA CRUZ JUAN`) se separaría mal con la regla de la primera palabra.
 
@@ -334,6 +335,23 @@ RADIOLOGIA 294 · TOMOGRAFIA 160 · RESONANCIA MAGNETICA 49 · MAMOGRAFIA 10 · 
 **12 filas quedan con `revisar = SI`** (sin modalidad en el texto, procedimientos que no son imagen —manometría, sondas,
 radioterapia—, o mezcla de modalidades en un texto). Los fluoroscópicos con bario se asignaron a `RADIOGRAFIA CONTRASTADA`.
 La salida conserva el texto original y los códigos (1 a 522) y agrega `modalidad_ris`, `revisar`, `observacion`.
+
+### 10.2 Equipo por modalidad (`IdEquipment` y `BusinessUnit`)
+
+El RIS rechazó el ORM con `Mandatory data in ... IdEquipment and BusinessUnit are null` (✅ error real). Decisión: un **equipo genérico por
+modalidad**, configurable desde la pantalla *Estudios → Equipo por modalidad*.
+
+- **Modalidad del RIS de cada estudio:** se guarda en la equivalencia (`modalidad_ris`). Si no se indicó, se **deduce del texto** del estudio
+  (`core/modalidad_ris.py`; la modalidad DICOM del worklist solo se usa si el texto no la indica). En la pantalla se puede cambiar por estudio.
+- **Tabla `equipos_modalidad`** (se crea y siembra sola): una fila por modalidad con `codigo_equipo`, `descripcion_equipo` y `unidad_negocio`.
+  Valores por defecto: RADIOLOGIA `DX`, RADIOGRAFIA CONTRASTADA `DX`, TOMOGRAFIA `CT`, RESONANCIA MAGNETICA `MR`, MAMOGRAFIA `MG`,
+  ECOGRAFIA `US`, DENSITOMETRIA OSEA `BMD`, MEDICINA NUCLEAR `NM`; descripción `EQUIPO GENERICO <código>`; unidad de negocio vacía.
+  Editables y restaurables (*Restaurar por defecto*).
+- **Uso:** `PV1-3` = `{codigo_equipo}^^^^^^^{descripcion_equipo}` (estructura del ORM de referencia). 🔶 Qué campo HL7 alimenta `BusinessUnit` no se conoce
+  todavía: cuando se sepa se asigna con `{unidad_negocio}` (si se usa y la modalidad no la tiene configurada, el ORM se retiene).
+- **CSV:** *Exportar pendientes* trae `modalidad_ris` (la sugerida) y `modalidad_dicom`; *Importar CSV* lee `modalidad_ris` **por nombre de columna**
+  (si falta, se conserva la que ya tenía el estudio). Una modalidad fuera de las 8 del RIS se rechaza con el número de fila.
+- `Radiografía contrastada` usa `DX` por defecto (decisión pendiente de confirmar: el RIS podría tener un equipo de fluoroscopia).
 
 ---
 
@@ -488,10 +506,11 @@ esto elimina su trazabilidad.
 | `core/catalogos.py` | Catálogo de tags DICOM y campos HL7, mapeos por defecto |
 | `core/mapeo_repo.py`, `core/config_repo.py` | Mapeos/valores fijos y canales en BD |
 | `core/equivalencias_repo.py` | Equivalencias de estudio, CSV, pendientes, modalidades |
+| `core/equipos_repo.py`, `core/modalidad_ris.py` | Equipo por modalidad; modalidades del RIS y su deducción desde el texto |
 | `core/auditoria.py` | Estado por mensaje, estado de la orden, reproceso |
 | `core/emisor_mllp.py` | Envío MLLP y validación del ACK |
 | `core/api.py` | API REST de la consola |
 | `frontend-motor/src/components/` | `Monitor`, `AuditoriaModal`, `Canales`, `Mapeos`, `Estudios` |
 | `tools/consultar_worklist.py` | Inspección del worklist de origen |
-| `tools/clasificar_modalidad_ris.py` | Asignación de modalidad del RIS a cada estudio |
+| `tools/clasificar_modalidad_ris.py` | Asignación de modalidad del RIS a cada estudio (usa `core/modalidad_ris.py`) |
 | `build.bat`, `installer/` | Construcción del instalador |

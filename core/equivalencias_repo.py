@@ -5,10 +5,12 @@ import re
 import unicodedata
 from collections import Counter
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from core.database import SessionLocal, engine
 from core.models import Base, EquivalenciaEstudio, RegistroTrazabilidad
+from core.modalidad_ris import MODALIDADES_RIS, clasificar
+from core import equipos_repo
 
 TAG_DESCRIPCION = "00321060"  # Requested Procedure Description
 
@@ -20,6 +22,10 @@ def _asegurar_tabla():
     global _tabla_lista
     if not _tabla_lista:
         Base.metadata.create_all(bind=engine, tables=[EquivalenciaEstudio.__table__])
+        # create_all no agrega columnas a una tabla existente (instalaciones anteriores)
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE equivalencias_estudio "
+                              "ADD COLUMN IF NOT EXISTS modalidad_ris VARCHAR(32)"))
         _tabla_lista = True
 
 
@@ -36,6 +42,7 @@ def _to_dict(e: EquivalenciaEstudio) -> dict:
         "descripcion_origen": e.descripcion_origen,
         "codigo_destino": e.codigo_destino,
         "descripcion_destino": e.descripcion_destino,
+        "modalidad_ris": e.modalidad_ris,
         "actualizado": e.updated_at.strftime("%Y-%m-%d %H:%M:%S") if e.updated_at else None,
     }
 
@@ -64,11 +71,24 @@ def listar() -> list:
         db.close()
 
 
-def upsert(descripcion_origen: str, codigo_destino: str, descripcion_destino: str = "") -> dict:
+def _modalidad_valida(modalidad):
+    """Normaliza una modalidad del RIS ('' / None = sin indicar). Lanza ValueError si no es valida."""
+    m = " ".join(str(modalidad or "").split()).upper()
+    if not m:
+        return None
+    if m not in MODALIDADES_RIS:
+        raise ValueError("Modalidad del RIS no valida: %r. Opciones: %s" % (m, ", ".join(MODALIDADES_RIS)))
+    return m
+
+
+def upsert(descripcion_origen: str, codigo_destino: str, descripcion_destino: str = "",
+           modalidad_ris: str = None) -> dict:
+    """Crea o actualiza una equivalencia. Si no se indica modalidad, conserva la existente."""
     origen = " ".join(str(descripcion_origen or "").split())
     codigo = str(codigo_destino or "").strip()
     if not origen or not codigo:
         raise ValueError("Hacen falta la descripcion de origen y el codigo de destino.")
+    modalidad = _modalidad_valida(modalidad_ris)
     destino = " ".join(str(descripcion_destino or "").split()) or origen
     _asegurar_tabla()
     db = SessionLocal()
@@ -77,10 +97,13 @@ def upsert(descripcion_origen: str, codigo_destino: str, descripcion_destino: st
         e = db.query(EquivalenciaEstudio).filter(EquivalenciaEstudio.clave == clave).first()
         if e is None:
             e = EquivalenciaEstudio(clave=clave, descripcion_origen=origen,
-                                    codigo_destino=codigo, descripcion_destino=destino)
+                                    codigo_destino=codigo, descripcion_destino=destino,
+                                    modalidad_ris=modalidad)
             db.add(e)
         else:
             e.descripcion_origen, e.codigo_destino, e.descripcion_destino = origen, codigo, destino
+            if modalidad:
+                e.modalidad_ris = modalidad
         db.commit()
         db.refresh(e)
         return _to_dict(e)
@@ -106,12 +129,13 @@ def eliminar(id_) -> bool:
 
 
 def parsear_csv(texto: str):
-    """CSV con columnas: descripcion_origen ; codigo ; [descripcion_destino] ; (extras ignoradas).
+    """CSV con columnas: descripcion_origen ; codigo ; [descripcion_destino] ; ...
 
-    Acepta separador ; , o tabulador y una fila de encabezado opcional. Las filas con
-    descripcion pero sin codigo (aun no completadas, como las que trae la exportacion
-    de pendientes) se omiten sin ser un error.
-    Devuelve (filas, errores, omitidas): filas = [(origen, codigo, destino)].
+    Acepta separador ; , o tabulador y una fila de encabezado opcional. Si el encabezado
+    tiene una columna `modalidad_ris` se lee por nombre (las demas columnas extra se ignoran).
+    Las filas con descripcion pero sin codigo (aun no completadas, como las que trae la
+    exportacion de pendientes) se omiten sin ser un error.
+    Devuelve (filas, errores, omitidas): filas = [(origen, codigo, destino, modalidad_ris)].
     """
     texto = (texto or "").lstrip("\ufeff")
     # Solo se detecta el separador; las comillas siguen el formato estandar (""
@@ -119,18 +143,27 @@ def parsear_csv(texto: str):
     primera = texto.split("\n", 1)[0]
     separador = max(";,\t", key=primera.count) if any(c in primera for c in ";,\t") else ";"
     filas, errores, omitidas = [], [], 0
+    col_mod = None
     for n, fila in enumerate(csv.reader(io.StringIO(texto), delimiter=separador), 1):
         celdas = [c.strip() for c in fila]
         if not any(celdas):
             continue
         if n == 1 and normalizar(celdas[0]) in ("descripcion_origen", "descripcion", "estudio", "origen"):
+            nombres = [normalizar(c) for c in celdas]
+            col_mod = nombres.index("modalidad_ris") if "modalidad_ris" in nombres else None
             continue  # encabezado
         if not celdas[0]:
             errores.append("Fila %d: falta la descripcion de origen." % n)
         elif len(celdas) < 2 or not celdas[1]:
             omitidas += 1  # todavia sin codigo
         else:
-            filas.append((celdas[0], celdas[1], celdas[2] if len(celdas) > 2 else ""))
+            modalidad = celdas[col_mod] if col_mod is not None and col_mod < len(celdas) else ""
+            try:
+                modalidad = _modalidad_valida(modalidad) or ""
+            except ValueError as e:
+                errores.append("Fila %d: %s" % (n, e))
+                continue
+            filas.append((celdas[0], celdas[1], celdas[2] if len(celdas) > 2 else "", modalidad))
     return filas, errores, omitidas
 
 
@@ -138,12 +171,12 @@ def importar_csv(texto: str) -> dict:
     filas, errores, omitidas = parsear_csv(texto)
     existentes = {e["descripcion_origen"] for e in listar()}
     nuevos = actualizados = 0
-    for origen, codigo, destino in filas:
+    for origen, codigo, destino, modalidad in filas:
         if " ".join(origen.split()) in existentes:
             actualizados += 1
         else:
             nuevos += 1
-        upsert(origen, codigo, destino)
+        upsert(origen, codigo, destino, modalidad or None)
     return {"nuevos": nuevos, "actualizados": actualizados, "omitidas": omitidas, "errores": errores}
 
 
@@ -186,14 +219,20 @@ def panel() -> dict:
         for e in equivalencias:
             d = _to_dict(e)
             d["modalidad"] = _txt_modalidades(uso.get(e.clave, {}).get("mods", Counter()))
+            d["modalidad_sugerida"] = clasificar(e.descripcion_origen, d["modalidad"])[0]
             eqs.append(d)
     finally:
         db.close()
-    pend = [{"descripcion": u["descripcion"], "cantidad": u["cantidad"],
-             "modalidad": _txt_modalidades(u["mods"])}
-            for c, u in sorted(uso.items(), key=lambda kv: -kv[1]["cantidad"])
-            if c not in cargadas]
-    return {"equivalencias": eqs, "pendientes": pend}
+    pend = []
+    for c, u in sorted(uso.items(), key=lambda kv: -kv[1]["cantidad"]):
+        if c in cargadas:
+            continue
+        dicom = _txt_modalidades(u["mods"])
+        sugerida, _, obs = clasificar(u["descripcion"], dicom)
+        pend.append({"descripcion": u["descripcion"], "cantidad": u["cantidad"], "modalidad": dicom,
+                     "modalidad_sugerida": sugerida})
+    return {"equivalencias": eqs, "pendientes": pend,
+            "modalidades_ris": list(MODALIDADES_RIS), "equipos": equipos_repo.listar()}
 
 
 def pendientes() -> list:

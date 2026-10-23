@@ -51,8 +51,20 @@ def escapar(valor) -> str:
 _PLANTILLA = re.compile(r"\{(?:([0-9A-Fa-f]{8})(?::([a-z]+))?|([a-z_]+))\}")
 
 
-class EstudioSinCodigo(Exception):
+class DatoSinEquivalencia(Exception):
+    """Falta un dato del destino que se resuelve en la consola (estudio o equipo)."""
+
+
+class EstudioSinCodigo(DatoSinEquivalencia):
     """El estudio del worklist no tiene equivalencia cargada en el destino."""
+
+
+class EquipoSinConfigurar(DatoSinEquivalencia):
+    """La modalidad del estudio no tiene equipo (o unidad de negocio) configurado."""
+
+
+_MARCADORES_ESTUDIO = ("codigo_estudio", "descripcion_estudio")
+_MARCADORES_EQUIPO = ("codigo_equipo", "descripcion_equipo", "unidad_negocio")
 
 
 def _valor_derivado(payload: dict, tag: str, parte) -> str:
@@ -72,11 +84,18 @@ def _valor_derivado(payload: dict, tag: str, parte) -> str:
 def _marcador(nombre: str, payload: dict, ahora: str, contexto: dict) -> str:
     if nombre == "ahora":
         return ahora
-    if nombre in ("codigo_estudio", "descripcion_estudio"):
+    if nombre in _MARCADORES_ESTUDIO:
         if nombre not in contexto:
             raise EstudioSinCodigo(
                 "Estudio sin codigo de equivalencia: %r. Cargalo en Estudios y reprocesa."
                 % (payload.get("00321060", ""),))
+        return escapar(contexto[nombre])
+    if nombre in _MARCADORES_EQUIPO:
+        if not contexto.get(nombre):
+            raise EquipoSinConfigurar(
+                "Sin %s para la modalidad %r. Configuralo en Estudios y reprocesa."
+                % ("equipo configurado" if nombre != "unidad_negocio" else "unidad de negocio configurada",
+                   contexto.get("_modalidad", "")))
         return escapar(contexto[nombre])
     raise ValueError("Marcador desconocido: {%s}" % nombre)
 

@@ -4,7 +4,7 @@ import datetime
 
 from huey import SqliteHuey
 from core.transformador import procesar_transformacion
-from core.serializador_hl7 import EstudioSinCodigo
+from core.serializador_hl7 import DatoSinEquivalencia
 from core.auditoria import actualizar_envio, obtener_hl7
 from core.emisor_mllp import enviar_mensaje_mllp, control_id, ErrorEmision
 from core import config_repo
@@ -53,7 +53,7 @@ def _generar(correlation_id, payload_dicom, tipo):
 
     Se regenera en cada intento, asi un cambio de configuracion se aplica al reenviar.
     Se conserva el MSH-10 del mensaje previo, para que el destino detecte duplicados.
-    Lanza EstudioSinCodigo si el estudio no tiene equivalencia cargada.
+    Lanza DatoSinEquivalencia si falta la equivalencia del estudio o el equipo de su modalidad.
     """
     previo = (obtener_hl7(correlation_id) or {}).get(tipo)
     return procesar_transformacion(
@@ -84,8 +84,8 @@ def tarea_enviar_mensaje(correlation_id, payload_dicom, tipo, task=None):
         actualizar_envio(correlation_id, tipo, {"estado": "PENDIENTE"}, mensaje=mensaje)
         host, puerto = _destino(clave_canal)
         ack = enviar_mensaje_mllp(mensaje, host=host, puerto=puerto)
-    except EstudioSinCodigo as e:
-        error = str(e)  # se resuelve cargando la equivalencia: los reintentos la recogen
+    except DatoSinEquivalencia as e:
+        error = str(e)  # se resuelve en Estudios (equivalencia o equipo): los reintentos lo recogen
     except ErrorEmision as e:
         error = str(e)
     except Exception as e:
