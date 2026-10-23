@@ -1,4 +1,5 @@
 """Serializador HL7 v2.5 dirigido por el mapeo + valores fijos configurados."""
+import os
 import uuid
 import datetime
 
@@ -25,8 +26,9 @@ CONFIG = {
     },
 }
 
-SENDING_APP = "MOTOR_DICOM"
-SENDING_FACILITY = "TECNOIMAGEN"
+# Identidad del emisor (MSH-3 / MSH-4) que valida el canal de Mirth.
+SENDING_APP = os.environ.get("HL7_SENDING_APP", "SISGH")
+SENDING_FACILITY = os.environ.get("HL7_SENDING_FACILITY", "ARP03")
 
 
 def escapar(valor) -> str:
